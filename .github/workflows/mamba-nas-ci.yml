@@ -1,0 +1,17 @@
+name: mamba-nas-cpu
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: pip install torch==2.4.0 --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install numpy pandas scikit-learn pymoo cloudpickle pytest
+      - run: pytest -q mamba_nas/tests -m "not gpu"

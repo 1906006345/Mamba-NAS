@@ -1,0 +1,7 @@
+population_size: 24
+max_unique_candidates: 384
+epochs: 20
+patience: 3
+batch_size: 32
+learning_rate: 0.001
+weight_decay: 0.0001
