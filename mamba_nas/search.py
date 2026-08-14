@@ -6,6 +6,7 @@ import json
 import math
 import random
 import traceback
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -97,7 +98,10 @@ class CandidateEvaluator:
                 for line in handle:
                     if line.strip():
                         row = json.loads(line)
-                        if row.get("status") in ("completed", "failed"):
+                        # Completed candidates are reusable across restarts. Failed
+                        # candidates are cached only for this process so a repaired
+                        # CUDA/backend environment can retry them on the next run.
+                        if row.get("status") == "completed":
                             cache[row["candidate_hash"]] = row
         return cache
 
@@ -249,6 +253,32 @@ def select_representatives(front: list[dict]) -> dict[str, dict]:
     return {"high_accuracy": high, "knee": knee, "low_cost": low}
 
 
+def abort_all_failed(evaluator: CandidateEvaluator, dataset_dir: Path, manifest: dict) -> None:
+    failure_path = evaluator.search_dir / "failures.jsonl"
+    failures = []
+    if failure_path.exists():
+        with failure_path.open("r", encoding="utf-8") as handle:
+            failures = [json.loads(line) for line in handle if line.strip()]
+    counts = Counter(row.get("error", "unknown error") for row in failures)
+    common_error, common_count = counts.most_common(1)[0] if counts else ("unknown error", 0)
+    summary = {
+        "failed_candidates": sum(row["status"] == "failed" for row in evaluator.cache.values()),
+        "failure_records": len(failures),
+        "most_common_error": common_error,
+        "most_common_error_count": common_count,
+        "latest_traceback": failures[-1].get("traceback") if failures else None,
+    }
+    atomic_json(evaluator.search_dir / "failure_summary.json", summary)
+    manifest["search_completed"] = False
+    manifest["failure_summary"] = summary
+    atomic_json(dataset_dir / "manifest.json", manifest)
+    raise RuntimeError(
+        f"All evaluated candidates failed. Most common error ({common_count} records): "
+        f"{common_error}. See {evaluator.search_dir / 'failure_summary.json'} and "
+        f"{failure_path}. Fix the backend, then rerun; failed candidates are retryable."
+    )
+
+
 def _hypervolume(front: list[dict], max_objective_macs: float) -> float:
     if not front:
         return 0.0
@@ -300,6 +330,19 @@ def run_search(
         from pymoo.operators.sampling.rnd import IntegerRandomSampling
     except ImportError as exc:
         raise RuntimeError("PyTorch and pymoo are required to run a search") from exc
+
+    if mixer_factory is None:
+        if config.device.startswith("cuda") and not torch.cuda.is_available():
+            raise RuntimeError(
+                "CUDA is unavailable. Official Mamba search requires a GPU-visible Linux container."
+            )
+        try:
+            from mamba_ssm import Mamba as _OfficialMamba  # noqa: F401
+        except ImportError as exc:
+            raise RuntimeError(
+                "mamba_ssm is not installed. Install mamba-ssm==2.1.0 after PyTorch, then run "
+                "`python -m mamba_nas.cli verify-environment` before search."
+            ) from exc
 
     run_id = run_id or new_run_id()
     dataset_name = "SyntheticUEA" if synthetic else dataset
@@ -383,10 +426,15 @@ def run_search(
             atomic_pickle(search_dir / "generations" / f"generation_{generation:04d}_state.pkl", state)
         finally:
             algorithm.problem.evaluator = active_evaluator
+        completed = [row for row in evaluator.cache.values() if row["status"] == "completed"]
+        if len(evaluator.cache) >= config.population_size and not completed:
+            abort_all_failed(evaluator, dataset_dir, manifest)
         if len(evaluator.cache) >= config.max_unique_candidates:
             break
     evaluator.write_evaluations_csv()
     front = nondominated([row for row in evaluator.cache.values() if row["status"] == "completed"])
+    if not front:
+        abort_all_failed(evaluator, dataset_dir, manifest)
     atomic_csv(search_dir / "pareto_front.csv", front)
     atomic_json(search_dir / "representatives.json", select_representatives(front))
     manifest["search_completed"] = True
