@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from mamba_nas.data import fit_normalization, normalize_samples, stratified_inner_split
+from mamba_nas.data import fit_normalization, normalize_samples, stratified_inner_split, validate_ts_structure
 
 
 def test_split_is_stratified_deterministic_and_disjoint():
@@ -27,3 +27,18 @@ def test_normalization_uses_only_supplied_training_samples():
     assert stats.mean.item() == 2.0
     assert normalize_samples(validation, stats)[0].item() == 998.0
 
+
+def test_ts_structure_rejects_a_truncated_case(tmp_path):
+    valid = tmp_path / "valid.ts"
+    valid.write_text(
+        "@problemName demo\n@timestamps false\n@classLabel true a b\n@data\n1,2:3,4:a\n5,6:7,8:b\n",
+        encoding="utf-8",
+    )
+    assert validate_ts_structure(valid) == {"cases": 2, "dimensions": 2}
+    truncated = tmp_path / "truncated.ts"
+    truncated.write_text(
+        "@problemName demo\n@timestamps false\n@classLabel true a b\n@data\n1,2:3,4:a\n5,6:b\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(OSError, match="truncated"):
+        validate_ts_structure(truncated)

@@ -39,6 +39,48 @@ def dataset_files(root: str | Path, dataset: str) -> tuple[Path, Path]:
     return directory / f"{dataset}_TRAIN.ts", directory / f"{dataset}_TEST.ts"
 
 
+def validate_ts_structure(path: str | Path) -> dict[str, int]:
+    """Detect truncated non-timestamp UEA files before sktime parses them."""
+    path = Path(path)
+    in_data = False
+    timestamps = None
+    expected_dimensions = None
+    cases = 0
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        for line_number, raw_line in enumerate(handle, start=1):
+            line = raw_line.strip()
+            if not line:
+                continue
+            lowered = line.lower()
+            if not in_data:
+                if lowered.startswith("@timestamps"):
+                    parts = lowered.split()
+                    timestamps = len(parts) > 1 and parts[1] == "true"
+                elif lowered == "@data":
+                    in_data = True
+                continue
+            if timestamps:
+                # Timestamp strings may themselves contain colons; sktime remains
+                # the authoritative validator for those uncommon datasets.
+                cases += 1
+                continue
+            dimensions = line.count(":")
+            if expected_dimensions is None:
+                expected_dimensions = dimensions
+                if expected_dimensions < 1:
+                    raise OSError(f"Malformed .ts data at {path}:{line_number}: no dimensions found")
+            elif dimensions != expected_dimensions:
+                raise OSError(
+                    f"Malformed or truncated .ts file {path}: line {line_number} has "
+                    f"{dimensions} dimensions, expected {expected_dimensions}. Re-download it with "
+                    f"`python -m mamba_nas.cli download --dataset {path.parent.name} --force`."
+                )
+            cases += 1
+    if not in_data or cases == 0:
+        raise OSError(f"Malformed or empty .ts file: {path}")
+    return {"cases": cases, "dimensions": int(expected_dimensions or 0)}
+
+
 def download_dataset(root: str | Path, dataset: str, force: bool = False) -> list[Path]:
     if dataset not in UEA10:
         raise ValueError(f"{dataset!r} is not in the uea10 suite")
@@ -50,7 +92,10 @@ def download_dataset(root: str | Path, dataset: str, force: bool = False) -> lis
         if force or not path.exists():
             temporary = path.with_suffix(path.suffix + ".part")
             urllib.request.urlretrieve(url, temporary)
+            validate_ts_structure(temporary)
             temporary.replace(path)
+        else:
+            validate_ts_structure(path)
         digest = hashlib.sha256()
         with path.open("rb") as handle:
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
@@ -87,6 +132,7 @@ def _interpolate_nan(sample: np.ndarray) -> np.ndarray:
 
 
 def load_ts(path: str | Path, class_names: Sequence[str] | None = None) -> SeriesCollection:
+    validate_ts_structure(path)
     try:
         from sktime.datasets import load_from_tsfile_to_dataframe
     except ImportError as exc:
