@@ -180,6 +180,30 @@ def stratified_inner_split(labels: np.ndarray, seed: int = SPLIT_SEED) -> tuple[
     return np.sort(train), np.sort(validation)
 
 
+def stratified_kfold_splits(
+    labels: np.ndarray, n_splits: int = 5, seed: int = SPLIT_SEED
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Create deterministic stratified folds shared by every candidate architecture."""
+    labels = np.asarray(labels)
+    _, counts = np.unique(labels, return_counts=True)
+    if n_splits < 2:
+        raise ValueError(f"n_splits must be at least 2, got {n_splits}")
+    if np.any(counts < n_splits):
+        rare = np.unique(labels)[counts < n_splits].tolist()
+        raise ValueError(
+            f"Stratified {n_splits}-fold split is impossible: classes {rare} have fewer "
+            f"than {n_splits} TRAIN samples"
+        )
+    from sklearn.model_selection import StratifiedKFold
+
+    splitter = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+    indices = np.arange(len(labels))
+    return [
+        (np.sort(train), np.sort(validation))
+        for train, validation in splitter.split(indices, labels)
+    ]
+
+
 def fit_normalization(samples: Sequence[np.ndarray]) -> NormalizationStats:
     if not samples:
         raise ValueError("Cannot fit normalization without samples")

@@ -18,8 +18,19 @@ class MacBreakdown:
     def total(self) -> int:
         return self.tokenizer + self.mamba + self.pooling + self.classifier
 
+    @property
+    def flops(self) -> int:
+        """Analytical FLOPs convention: one MAC is two floating-point ops."""
+        return int(2 * self.total)
+
     def to_dict(self) -> dict:
-        return {**asdict(self), "total": self.total}
+        return {
+            **asdict(self),
+            "total": self.total,
+            "flops": self.flops,
+            "macs_source": "analytical_mamba_cost",
+            "flops_source": "analytical_flops_2x_macs",
+        }
 
 
 def estimate_macs(
@@ -30,9 +41,15 @@ def estimate_macs(
     The selective scan term counts state update and readout operations. Elementwise
     activations/norms are intentionally excluded and this convention is exported.
     """
-    tokens = token_length(sequence_length, genome.tokenizer)
     patch = 1 if genome.tokenizer == "point" else int(genome.tokenizer.removeprefix("patch"))
-    tokenizer = tokens * genome.d_model * input_channels * patch
+    time_tokens = token_length(sequence_length, genome.tokenizer)
+    tokens = token_length(
+        sequence_length,
+        genome.tokenizer,
+        genome.scan_order,
+        input_channels,
+    )
+    tokenizer = time_tokens * genome.d_model * input_channels * patch
 
     d_inner = genome.expand * genome.d_model
     dt_rank = math.ceil(genome.d_model / 16)

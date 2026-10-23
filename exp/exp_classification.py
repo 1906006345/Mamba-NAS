@@ -1,6 +1,8 @@
 from data_provider.data_factory import data_provider
 from exp.exp_basic import Exp_Basic
 from utils.tools import EarlyStopping, adjust_learning_rate, cal_accuracy
+from mamba_nas.performance import model_performance
+from sklearn.metrics import f1_score
 import torch
 import torch.nn as nn
 from torch import optim
@@ -68,13 +70,20 @@ class Exp_Classification(Exp_Basic):
 
         preds = torch.cat(preds, 0)
         trues = torch.cat(trues, 0)
-        probs = torch.nn.functional.softmax(preds)  # (total_samples, num_classes) est. prob. for each class and sample
-        predictions = torch.argmax(probs, dim=1).cpu().numpy()  # (total_samples,) int class index for each sample
+        probs = torch.nn.functional.softmax(preds, dim=1)
+        predictions = torch.argmax(probs, dim=1).cpu().numpy()
         trues = trues.flatten().cpu().numpy()
+
         accuracy = cal_accuracy(predictions, trues)
+        macro_f1 = f1_score(
+            trues,
+            predictions,
+            average="macro",
+            zero_division=0,
+        )
 
         self.model.train()
-        return total_loss, accuracy
+        return total_loss, accuracy, macro_f1
 
     def train(self, setting):
         train_data, train_loader = self._get_data(flag='TRAIN')
@@ -126,13 +135,32 @@ class Exp_Classification(Exp_Basic):
 
             print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
             train_loss = np.average(train_loss)
-            vali_loss, val_accuracy = self.vali(vali_data, vali_loader, criterion)
-            test_loss, test_accuracy = self.vali(test_data, test_loader, criterion)
+            vali_loss, val_accuracy, val_macro_f1 = self.vali(
+                vali_data, vali_loader, criterion
+            )
+            test_loss, test_accuracy, test_macro_f1 = self.vali(
+                test_data, test_loader, criterion
+            )
 
             print(
-                "Epoch: {0}, Steps: {1} | Train Loss: {2:.3f} Vali Loss: {3:.3f} Vali Acc: {4:.3f} Test Loss: {5:.3f} Test Acc: {6:.3f}"
-                .format(epoch + 1, train_steps, train_loss, vali_loss, val_accuracy, test_loss, test_accuracy))
-            early_stopping(-val_accuracy, self.model, path)
+                "Epoch: {0}, Steps: {1} | "
+                "Train Loss: {2:.3f} | "
+                "Vali Loss: {3:.3f} Vali Acc: {4:.4f} "
+                "Vali Macro-F1: {5:.4f} | "
+                "Test Loss: {6:.3f} Test Acc: {7:.4f} "
+                "Test Macro-F1: {8:.4f}"
+                .format(
+                    epoch + 1,
+                    train_steps,
+                    train_loss,
+                    vali_loss,
+                    val_accuracy,
+                    val_macro_f1,
+                    test_loss,
+                    test_accuracy,
+                    test_macro_f1,
+                )
+            )
             if early_stopping.early_stop:
                 print("Early stopping")
                 break
@@ -174,6 +202,8 @@ class Exp_Classification(Exp_Basic):
         predictions = torch.argmax(probs, dim=1).cpu().numpy()  # (total_samples,) int class index for each sample
         trues = trues.flatten().cpu().numpy()
         accuracy = cal_accuracy(predictions, trues)
+        macro_f1 = f1_score(trues, predictions, average='macro', zero_division=0)
+        performance = model_performance(self.model, test_loader, self.device)
 
         # result save
         folder_path = './results/' + setting + '/'
@@ -181,10 +211,36 @@ class Exp_Classification(Exp_Basic):
             os.makedirs(folder_path)
 
         print('accuracy:{}'.format(accuracy))
+        print('macro_f1:{}'.format(macro_f1))
+        print('parameters:{}'.format(performance['parameters']))
+        print('macs:{}'.format(performance['macs']))
+        print('flops:{}'.format(performance.get('flops')))
+        print('profile_macs:{}'.format(performance.get('profile_macs')))
+        print('profile_flops:{}'.format(performance.get('profile_flops')))
+        print('latency_median_ms:{}'.format(performance.get('latency_median_ms')))
+        print('latency_p90_ms:{}'.format(performance.get('latency_p90_ms')))
+        print('throughput_samples_per_sec:{}'.format(performance.get('throughput_samples_per_sec')))
+        print('peak_memory_bytes:{}'.format(performance.get('peak_memory_bytes')))
         file_name='result_classification.txt'
         f = open(os.path.join(folder_path,file_name), 'a')
         f.write(setting + "  \n")
         f.write('accuracy:{}'.format(accuracy))
+        f.write('\n')
+        f.write('macro_f1:{}'.format(macro_f1))
+        f.write('\n')
+        f.write('parameters:{}'.format(performance['parameters']))
+        f.write('\n')
+        f.write('macs:{}'.format(performance['macs']))
+        f.write('\n')
+        f.write('macs_definition:{}'.format(performance['macs_definition']))
+        f.write('\nflops:{}'.format(performance.get('flops')))
+        f.write('\nprofile_macs:{}'.format(performance.get('profile_macs')))
+        f.write('\nprofile_flops:{}'.format(performance.get('profile_flops')))
+        f.write('\nlatency_median_ms:{}'.format(performance.get('latency_median_ms')))
+        f.write('\nlatency_p90_ms:{}'.format(performance.get('latency_p90_ms')))
+        f.write('\nthroughput_samples_per_sec:{}'.format(performance.get('throughput_samples_per_sec')))
+        f.write('\npeak_memory_bytes:{}'.format(performance.get('peak_memory_bytes')))
+        f.write('\nefficiency_definition:{}'.format(performance.get('efficiency_definition')))
         f.write('\n')
         f.write('\n')
         f.close()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 import random
 import time
 from dataclasses import dataclass
@@ -8,6 +9,9 @@ from dataclasses import dataclass
 import numpy as np
 
 from .metrics import classification_metrics
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def seed_everything(seed: int) -> None:
@@ -58,6 +62,7 @@ def train_classifier(
     patience: int,
     learning_rate: float,
     weight_decay: float,
+    log_context: str = "search",
 ) -> TrainResult:
     import torch
 
@@ -78,7 +83,17 @@ def train_classifier(
             optimizer.step()
             losses.append(float(loss.detach().cpu()))
         metrics, _, _, _ = evaluate(model, validation_loader, device)
-        history.append({"epoch": epoch, "train_loss": float(np.mean(losses)), **metrics})
+        train_loss = float(np.mean(losses))
+        history.append({"epoch": epoch, "train_loss": train_loss, **metrics})
+        LOGGER.info(
+            "[搜索训练] %s epoch=%d/%d loss=%.6f val_macro_f1=%.6f val_accuracy=%.6f",
+            log_context,
+            epoch,
+            epochs,
+            train_loss,
+            metrics["macro_f1"],
+            metrics["accuracy"],
+        )
         if metrics["macro_f1"] > best_score:
             best_score = metrics["macro_f1"]
             best_state = copy.deepcopy(model.state_dict())
@@ -109,6 +124,7 @@ def train_full_classifier(
     epochs: int,
     learning_rate: float,
     weight_decay: float,
+    log_context: str = "refit",
 ) -> TrainResult:
     """Train for a fixed epoch count; TEST is observed only after all updates finish."""
     import torch
@@ -128,7 +144,15 @@ def train_full_classifier(
             loss.backward()
             optimizer.step()
             losses.append(float(loss.detach().cpu()))
-        history.append({"epoch": epoch, "train_loss": float(np.mean(losses))})
+        train_loss = float(np.mean(losses))
+        history.append({"epoch": epoch, "train_loss": train_loss})
+        LOGGER.info(
+            "[重训练] %s epoch=%d/%d train_loss=%.6f",
+            log_context,
+            epoch,
+            epochs,
+            train_loss,
+        )
     metrics, logits, predictions, targets = evaluate(model, evaluation_loader, device)
     return TrainResult(
         model=model,

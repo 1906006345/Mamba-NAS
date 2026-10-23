@@ -34,3 +34,17 @@ def test_pymoo_crossover_tensor_layout():
     assert children.shape == parents.shape
     for child in children.reshape(-1, 8):
         decode(child)
+
+
+def test_scan_order_operators_never_create_point_interleaved():
+    rng = np.random.default_rng(2021)
+    # [tokenizer, blocks, direction, d_model, d_state, d_conv, expand, pooling, scan]
+    point_time = np.asarray([0, 0, 0, 0, 0, 0, 0, 0, 0])
+    patch_interleaved = np.asarray([1, 2, 1, 1, 1, 1, 1, 2, 1])
+    for _ in range(100):
+        first, second = uniform_crossover_arrays(
+            point_time, patch_interleaved, rng, use_scan_order=True
+        )
+        for child in (first, second):
+            decode(child)
+            decode(resample_mutation_array(child, rng, use_scan_order=True))

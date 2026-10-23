@@ -7,6 +7,7 @@ from exp.exp_imputation import Exp_Imputation
 from exp.exp_short_term_forecasting import Exp_Short_Term_Forecast
 from exp.exp_anomaly_detection import Exp_Anomaly_Detection
 from exp.exp_classification import Exp_Classification
+from exp.exp_classification_fair import Exp_Classification_Fair
 from exp.exp_zero_shot_forecasting import Exp_Zero_Shot_Forecast
 from utils.print_args import print_args
 import random
@@ -55,6 +56,45 @@ if __name__ == '__main__':
     # model define
     parser.add_argument('--expand', type=int, default=2, help='expansion factor for Mamba')
     parser.add_argument('--d_conv', type=int, default=4, help='conv kernel size for Mamba')
+    parser.add_argument('--d_state', type=int, default=16, help='state size for Mamba/MambaBaseline')
+    parser.add_argument('--projected_space', type=int, default=64,
+                        help='TSCMamba projected feature length')
+    parser.add_argument('--rescale_size', type=int, default=32,
+                        help='TSCMamba interpolated image side length')
+    parser.add_argument('--patch_size', type=int, default=4,
+                        help='TSCMamba 2D conversion patch size')
+    parser.add_argument('--no_rocket', type=int, choices=[0, 1], default=0,
+                        help='TSCMamba disable external projected features')
+    parser.add_argument('--half_rocket', type=int, choices=[0, 1], default=0,
+                        help='TSCMamba project only the second feature half')
+    parser.add_argument('--initial_focus', type=float, default=1.0,
+                        help='TSCMamba learnable fusion initialization')
+    parser.add_argument('--additive_fusion', type=int, choices=[0, 1], default=1,
+                        help='TSCMamba use additive instead of multiplicative fusion')
+    parser.add_argument('--num_mambas', type=int, default=1,
+                        help='TSCMamba number of residual Mamba blocks per scan')
+    parser.add_argument('--only_forward_scan', type=int, choices=[0, 1], default=0,
+                        help='TSCMamba disable reverse scan')
+    parser.add_argument('--flip_dir', type=int, choices=[1, 2], default=1,
+                        help='TSCMamba sequence dimension used by reverse scan')
+    parser.add_argument('--reverse_flip', type=int, choices=[0, 1], default=1,
+                        help='TSCMamba reverse the backward branch before fusion')
+    parser.add_argument('--max_pooling', type=int, choices=[0, 1], default=0,
+                        help='TSCMamba use max instead of mean pooling')
+    parser.add_argument('--stride', type=int, default=8,
+                        help='MambaTS patch stride')
+    parser.add_argument('--VPT_mode', type=str, default='none',
+                        help='MambaTS source compatibility option')
+    parser.add_argument('--ATSP_solver', type=str, default='none',
+                        help='MambaTS source compatibility option')
+    parser.add_argument('--use_casual_conv', type=int, choices=[0, 1], default=0,
+                        help='MambaTS source compatibility option')
+    parser.add_argument('--baseline_use_patch', action='store_true',
+                        help='MambaBaseline: use a non-overlapping patch tokenizer instead of point tokens')
+    parser.add_argument('--baseline_patch_size', type=int, choices=[8, 16], default=16,
+                        help='MambaBaseline patch size when --baseline_use_patch is enabled')
+    parser.add_argument('--baseline_pooling', type=str, choices=['mean', 'max', 'meanmax'], default='mean',
+                        help='MambaBaseline classification pooling')
     parser.add_argument('--top_k', type=int, default=5, help='for TimesBlock')
     parser.add_argument('--num_kernels', type=int, default=6, help='for Inception')
     parser.add_argument('--enc_in', type=int, default=7, help='encoder input size')
@@ -138,6 +178,19 @@ if __name__ == '__main__':
                         help="Discrimitive shapeDTW warp preset augmentation")
     parser.add_argument('--extra_tag', type=str, default="", help="Anything extra")
 
+    # Optional leakage-free UEA classification protocol. The legacy path remains
+    # the default so existing commands and published reproduction scripts keep
+    # their original behavior.
+    parser.add_argument('--classification_protocol', type=str, choices=['legacy', 'fair'], default='legacy',
+                        help='legacy uses the original TEST-as-validation flow; fair selects on TRAIN validation, '
+                             'refits on full TRAIN, then evaluates TEST once')
+    parser.add_argument('--classification_val_ratio', type=float, default=0.2,
+                        help='fraction of TRAIN reserved for validation in the fair protocol')
+    parser.add_argument('--classification_monitor', type=str, choices=['macro_f1', 'accuracy'], default='macro_f1',
+                        help='TRAIN-validation metric used for early stopping in the fair protocol')
+    parser.add_argument('--classification_seed', type=int, default=2021,
+                        help='split, initialization and loader seed for the fair protocol')
+
     # TimeXer
     parser.add_argument('--patch_len', type=int, default=16, help='patch length')
 
@@ -177,6 +230,18 @@ if __name__ == '__main__':
     print('Args in experiment:')
     print_args(args)
 
+    # Keep point and patch baseline runs in separate checkpoint/result
+    # directories; otherwise they would share the same setting name.
+    setting_model = args.model
+    if args.model == 'MambaBaseline':
+        setting_model += '_patch{}'.format(args.baseline_patch_size) if args.baseline_use_patch else '_point'
+        setting_model += '_ds{}_pool{}'.format(args.d_state, args.baseline_pooling)
+    elif args.model == 'TSCMamba':
+        setting_model += '_proj{}_img{}_ps{}_nm{}'.format(
+            args.projected_space, args.rescale_size, args.patch_size, args.num_mambas)
+    elif args.model == 'MambaTS':
+        setting_model += '_patch{}_stride{}'.format(args.patch_len, args.stride)
+
     if args.task_name == 'long_term_forecast':
         Exp = Exp_Long_Term_Forecast
     elif args.task_name == 'short_term_forecast':
@@ -186,7 +251,7 @@ if __name__ == '__main__':
     elif args.task_name == 'anomaly_detection':
         Exp = Exp_Anomaly_Detection
     elif args.task_name == 'classification':
-        Exp = Exp_Classification
+        Exp = Exp_Classification_Fair if args.classification_protocol == 'fair' else Exp_Classification
     elif args.task_name == 'zero_shot_forecast':
         Exp = Exp_Zero_Shot_Forecast
     else:
@@ -199,7 +264,7 @@ if __name__ == '__main__':
             setting = '{}_{}_{}_{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_expand{}_dc{}_fc{}_eb{}_dt{}_{}_{}'.format(
                 args.task_name,
                 args.model_id,
-                args.model,
+                setting_model,
                 args.data,
                 args.features,
                 args.seq_len,
@@ -232,7 +297,7 @@ if __name__ == '__main__':
         setting = '{}_{}_{}_{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_expand{}_dc{}_fc{}_eb{}_dt{}_{}_{}'.format(
             args.task_name,
             args.model_id,
-            args.model,
+            setting_model,
             args.data,
             args.features,
             args.seq_len,

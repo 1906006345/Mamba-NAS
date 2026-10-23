@@ -1,13 +1,8 @@
 import torch
+import torch.nn.functional as F
 from mamba_ssm import Mamba
-from RevIN.RevIN import RevIN
-import math
 import copy
 from einops.layers.torch import Rearrange
-from skimage.transform import resize
-import pywt
-import numpy as np
-import joblib
 
 class Model(torch.nn.Module):
     def __init__(self,configs):
@@ -34,14 +29,14 @@ class Model(torch.nn.Module):
             self.mamba1 = torch.nn.ModuleList([
                 Mamba(d_model=self.configs.projected_space*3,
                       d_state=self.configs.d_state,
-                      d_conv=self.configs.dconv,
-                      expand=self.configs.e_fact) for _ in range(self.configs.num_mambas)
+                      d_conv=self.configs.d_conv,
+                      expand=self.configs.expand) for _ in range(self.configs.num_mambas)
                 ])
             self.mamba2 = torch.nn.ModuleList([
                 Mamba(d_model=self.configs.enc_in,
                       d_state=self.configs.d_state,
-                      d_conv=self.configs.dconv,
-                      expand=self.configs.e_fact) for _ in range(self.configs.num_mambas)
+                      d_conv=self.configs.d_conv,
+                      expand=self.configs.expand) for _ in range(self.configs.num_mambas)
                 ])
 
             self.flatten=torch.nn.Flatten(start_dim=1)
@@ -60,9 +55,17 @@ class Model(torch.nn.Module):
             if self.configs.half_rocket==0:
                 x_projected=batch_x_features
             else:
-                x_projected=torch.cat([batch_x_features[:,:,:self.configs.projected_space//2],
-                                       self.projector(batch_x_features[:,:,self.configs.projected_space:])
-                                    ],dim=2)
+                if batch_x_features.shape[-1] == self.configs.seq_len:
+                    x_projected=torch.cat([batch_x_features[:,:,:self.configs.projected_space//2],
+                                           self.projector(batch_x_features[:,:,self.configs.projected_space:])
+                                        ],dim=2)
+                else:
+                    x_projected = F.interpolate(
+                        batch_x_features,
+                        size=self.configs.projected_space,
+                        mode='linear',
+                        align_corners=False,
+                    )
         if self.configs.additive_fusion==1:
             x_fused=(self.learnable_focus*x_projected)+(2.0-self.learnable_focus)*x_patched
         else:
@@ -117,9 +120,55 @@ class Model(torch.nn.Module):
         x_logits=self.classifier(x3)
         return x_logits
 
-    def forward(self,x_cwt,x_features):
+    def _sequence_inputs(self, x_enc, padding_mask=None):
+        """Convert the repository's [B, L, C] batch to the source inputs.
+
+        The original implementation received a CWT image and a projected
+        feature tensor from its data preprocessing code. The unified UEA
+        runner supplies only a padded time series, so we construct an
+        image-shaped interpolation and a channel-wise projected sequence here.
+        This keeps the source architecture and its fusion path unchanged.
+        """
+        if x_enc.ndim != 3:
+            raise ValueError('Expected x_enc with shape [B, L, C]')
+        if padding_mask is not None:
+            mask = padding_mask.to(device=x_enc.device).bool()
+            x_enc = x_enc * mask.unsqueeze(-1).to(x_enc.dtype)
+        sequence_features = x_enc.permute(0, 2, 1)
+        projected_features = F.interpolate(
+            sequence_features,
+            size=self.configs.projected_space,
+            mode='linear',
+            align_corners=False,
+        )
+        if self.configs.no_rocket==1:
+            x_features = sequence_features
+        elif self.configs.half_rocket==1:
+            # The source implementation receives half precomputed ROCKET
+            # features. For the standard sequence loader, use direct temporal
+            # interpolation for that half and project the raw sequence for the
+            # other half inside ``classification``.
+            x_features = projected_features
+        else:
+            x_features = projected_features
+        image_values = F.interpolate(
+            x_enc.permute(0, 2, 1),
+            size=self.configs.rescale_size * self.configs.rescale_size,
+            mode='linear',
+            align_corners=False,
+        )
+        x_cwt = image_values.reshape(
+            x_enc.shape[0],
+            x_enc.shape[2],
+            self.configs.rescale_size,
+            self.configs.rescale_size,
+        )
+        return x_cwt, x_features
+
+    def forward(self, x_enc, padding_mask=None, x_dec=None, x_mark_dec=None, mask=None):
          if self.configs.task_name=='classification':
-             return self.classification(x_cwt,x_features)
+             x_cwt, x_features = self._sequence_inputs(x_enc, padding_mask)
+             return self.classification(x_cwt, x_features)
        
 
 class ConversionLayer(torch.nn.Module):
@@ -142,5 +191,3 @@ class ConversionLayer(torch.nn.Module):
         x=self.patch_embedding(x)
         x=self.projector(x)
         return x
-
-         

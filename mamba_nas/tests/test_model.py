@@ -4,7 +4,7 @@ import pytest
 import torch
 
 from mamba_nas.macs import trainable_parameters
-from mamba_nas.model import MambaTSCClassifier
+from mamba_nas.model import MambaTSCClassifier, Tokenizer
 from mamba_nas.search_space import Genome
 from mamba_nas.tests.conftest import fake_mixer_factory
 
@@ -68,3 +68,29 @@ def test_shared_bidirectional_has_same_parameter_count():
         2, 3, genome(direction="bidirectional"), mixer_factory=fake_mixer_factory
     )
     assert trainable_parameters(forward) == trainable_parameters(bidirectional)
+
+
+def test_patch_interleaved_orders_patch_before_channel():
+    tokenizer = Tokenizer(2, 1, "patch8", "patch_interleaved")
+    with torch.no_grad():
+        tokenizer.projection.weight.fill_(1.0)
+        tokenizer.projection.bias.zero_()
+    values = torch.stack((torch.arange(1, 17), torch.arange(101, 117)), dim=-1).float()
+    tokens, token_mask = tokenizer(values.unsqueeze(0), torch.ones(1, 16, dtype=torch.bool))
+    assert tokens.shape == (1, 4, 1)
+    torch.testing.assert_close(
+        tokens[0, :, 0], torch.tensor([36.0, 836.0, 100.0, 900.0])
+    )
+    assert token_mask.tolist() == [[True, True, True, True]]
+
+
+def test_patch_interleaved_padding_values_cannot_change_logits():
+    model = MambaTSCClassifier(
+        3, 4, genome(tokenizer="patch8", scan_order="patch_interleaved"),
+        dropout=0, mixer_factory=fake_mixer_factory,
+    ).eval()
+    first = torch.randn(2, 24, 3)
+    mask = torch.tensor([[True] * 13 + [False] * 11, [True] * 24])
+    second = first.clone()
+    second[0, 13:] = torch.randn_like(second[0, 13:]) * 1000
+    torch.testing.assert_close(model(first, mask), model(second, mask), atol=1e-5, rtol=1e-5)

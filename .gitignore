@@ -159,10 +159,16 @@ data_loader_all.py
 /utils/self_tools.py
 /scripts/exp_scripts/
 
+runs/
 checkpoints/
 results/
 result_long_term_forecast.txt
 result_anomaly_detection.txt
+/mamba_nas/result.txt
 scripts/augmentation/
 run_anylearn.py
 environment.txt
+
+pytest-of-root/
+causal_conv1d-1.4.0+cu118torch2.4cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+mamba_ssm-2.1.0+cu118torch2.4cxx11abiFALSE-cp310-cp310-linux_x86_64.whl

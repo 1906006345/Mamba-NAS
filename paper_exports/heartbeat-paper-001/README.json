@@ -1,0 +1,16 @@
+{
+  "contains_predictions": false,
+  "contains_weights": false,
+  "files": [
+    "README.json",
+    "all_candidates.csv",
+    "confusion_matrices.csv",
+    "final_mean_std.csv",
+    "final_seed_results.csv",
+    "generation_hypervolume.csv",
+    "manifests.json",
+    "pareto_plot_data.csv",
+    "search_space_ablation.csv"
+  ],
+  "regenerable_from": "/workspace/shx/Distill/Mamba-NAS/Mamba-NAS/runs/heartbeat-paper-001"
+}

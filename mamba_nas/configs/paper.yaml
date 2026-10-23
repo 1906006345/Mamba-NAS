@@ -1,7 +1,15 @@
-population_size: 24
+population_size: 48
 max_unique_candidates: 384
 epochs: 20
 patience: 3
 batch_size: 32
 learning_rate: 0.001
 weight_decay: 0.0001
+search_algorithm: nsga2
+objective_weight: 0.7
+decision_weight: 0.3
+local_search_ratio: 0.3
+coupled_neighbor_ratio: 0.3
+archive_seed_ratio: 0.3
+pareto_seed_ratio: 0.5
+population_seed_ratio: 0.2

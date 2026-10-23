@@ -1,0 +1,37 @@
+[
+  {
+    "class_names": [
+      "abnormal",
+      "normal"
+    ],
+    "config": {
+      "batch_size": 32,
+      "budget": "paper",
+      "data_dir": "data/UEA",
+      "device": "cuda",
+      "dropout": 0.1,
+      "epochs": 20,
+      "learning_rate": 0.001,
+      "max_unique_candidates": 384,
+      "output_dir": "runs",
+      "patience": 3,
+      "population_size": 24,
+      "seed": 2021,
+      "weight_decay": 0.0001
+    },
+    "dataset": "Heartbeat",
+    "input_channels": 61,
+    "max_sequence_length": 405,
+    "pareto_size": 8,
+    "project": "MambaTSC-NSGA2",
+    "refit_completed": true,
+    "run_id": "heartbeat-paper-001",
+    "search_completed": true,
+    "split": {
+      "seed": 2021,
+      "strategy": "stratified_80_20"
+    },
+    "test_accessed": true,
+    "unique_evaluations": 384
+  }
+]

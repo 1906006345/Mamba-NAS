@@ -25,4 +25,16 @@ def test_patch_reduces_cost_and_capacity_increases_it():
     assert estimate_macs(g(num_blocks=3), 128, 4, 5).total > baseline
     assert estimate_macs(g(d_model=128), 128, 4, 5).total > baseline
     assert estimate_macs(g(expand=2), 128, 4, 5).total > baseline
+    estimate = estimate_macs(g(), 128, 4, 5)
+    assert estimate.flops == 2 * estimate.total
+    assert estimate.to_dict()["flops_source"] == "analytical_flops_2x_macs"
 
+
+def test_patch_interleaved_expands_scan_cost_by_channel_count():
+    time_major = estimate_macs(g(tokenizer="patch8"), 128, 4, 5)
+    interleaved = estimate_macs(
+        g(tokenizer="patch8", scan_order="patch_interleaved"), 128, 4, 5
+    )
+    assert interleaved.tokenizer == time_major.tokenizer
+    assert interleaved.mamba == 4 * time_major.mamba
+    assert interleaved.pooling == 4 * time_major.pooling

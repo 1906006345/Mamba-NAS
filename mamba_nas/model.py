@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from collections.abc import Callable
 
 import torch
@@ -48,11 +49,17 @@ def reverse_valid(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
 
 
 class Tokenizer(nn.Module):
-    def __init__(self, input_channels: int, d_model: int, tokenizer: str):
+    def __init__(self, input_channels: int, d_model: int, tokenizer: str, scan_order: str = "time_major"):
         super().__init__()
         self.kind = tokenizer
+        self.scan_order = scan_order
+        self.input_channels = input_channels
         self.patch_size = 1 if tokenizer == "point" else int(tokenizer.removeprefix("patch"))
-        if self.patch_size == 1:
+        if scan_order == "patch_interleaved":
+            if self.patch_size == 1:
+                raise ValueError("patch_interleaved does not support point tokenizer")
+            self.projection = nn.Linear(self.patch_size, d_model)
+        elif self.patch_size == 1:
             self.projection = nn.Linear(input_channels, d_model)
         else:
             self.projection = nn.Conv1d(
@@ -61,6 +68,22 @@ class Tokenizer(nn.Module):
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         x = x * mask.unsqueeze(-1).to(x.dtype)
+        if self.scan_order == "patch_interleaved":
+            padding = (-x.shape[1]) % self.patch_size
+            if padding:
+                x = torch.nn.functional.pad(x, (0, 0, 0, padding))
+                mask = torch.nn.functional.pad(mask, (0, padding), value=False)
+            patch_mask = mask.reshape(mask.shape[0], -1, self.patch_size).any(dim=-1)
+            patches = x.transpose(1, 2).unfold(-1, self.patch_size, self.patch_size)
+            tokens = self.projection(patches)
+            # patch0:c0,c1,..., patch1:c0,c1,...
+            tokens = tokens.permute(0, 2, 1, 3).reshape(
+                x.shape[0], -1, tokens.shape[-1]
+            )
+            token_mask = patch_mask.unsqueeze(-1).expand(
+                -1, -1, self.input_channels
+            ).reshape(mask.shape[0], -1)
+            return tokens * token_mask.unsqueeze(-1).to(tokens.dtype), token_mask
         if self.patch_size == 1:
             return self.projection(x) * mask.unsqueeze(-1).to(x.dtype), mask
         padding = (-x.shape[1]) % self.patch_size
@@ -107,7 +130,9 @@ class MambaTSCClassifier(nn.Module):
         super().__init__()
         self.genome = genome.validate()
         factory = mixer_factory or official_mamba_factory
-        self.tokenizer = Tokenizer(input_channels, genome.d_model, genome.tokenizer)
+        self.tokenizer = Tokenizer(
+            input_channels, genome.d_model, genome.tokenizer, genome.scan_order
+        )
         self.blocks = nn.ModuleList(
             ResidualMambaBlock(genome, factory, dropout) for _ in range(genome.num_blocks)
         )
@@ -137,7 +162,59 @@ class MambaTSCClassifier(nn.Module):
         return self.classifier(self.pool(x, token_mask))
 
 
-def token_length(sequence_length: int, tokenizer: str) -> int:
-    patch = 1 if tokenizer == "point" else int(tokenizer.removeprefix("patch"))
-    return math.ceil(sequence_length / patch)
+# Fixed, non-searched reference configuration.  Keeping this in the same module
+# as the searched classifier guarantees that the baseline and NAS candidates use
+# exactly the same masking, normalization layer, residual block and classifier
+# implementation.  Only the architecture choices are frozen.
+BASELINE_GENOME = Genome(
+    tokenizer="point",
+    num_blocks=1,
+    direction="forward",
+    d_model=64,
+    d_state=16,
+    d_conv=4,
+    expand=2,
+    pooling="mean",
+)
 
+
+class MambaBaselineClassifier(MambaTSCClassifier):
+    """The fixed Mamba baseline used for comparison with Mamba-NAS.
+
+    It deliberately has no architecture-search or candidate-dependent state.
+    The optional ``mixer_factory`` is useful for CPU unit tests; production runs
+    use the official ``mamba_ssm.Mamba`` implementation inherited from the base
+    classifier.
+    """
+
+    def __init__(
+        self,
+        input_channels: int,
+        num_classes: int,
+        dropout: float = 0.1,
+        tokenizer: str = "point",
+        mixer_factory: MixerFactory | None = None,
+    ):
+        if tokenizer not in {"point", "patch8", "patch16"}:
+            raise ValueError(
+                f"Invalid baseline tokenizer={tokenizer!r}; "
+                "expected 'point', 'patch8', or 'patch16'"
+            )
+        super().__init__(
+            input_channels=input_channels,
+            num_classes=num_classes,
+            genome=replace(BASELINE_GENOME, tokenizer=tokenizer),
+            dropout=dropout,
+            mixer_factory=mixer_factory,
+        )
+
+
+def token_length(
+    sequence_length: int,
+    tokenizer: str,
+    scan_order: str = "time_major",
+    input_channels: int = 1,
+) -> int:
+    patch = 1 if tokenizer == "point" else int(tokenizer.removeprefix("patch"))
+    tokens = math.ceil(sequence_length / patch)
+    return tokens * input_channels if scan_order == "patch_interleaved" else tokens

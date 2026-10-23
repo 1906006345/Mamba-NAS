@@ -14,6 +14,20 @@ except ImportError:
     MambaSimple = None
 
 try:
+    from . import TSCMamba
+except ImportError:
+    TSCMamba = None
+
+try:
+    from . import MambaTS
+except ImportError:
+    MambaTS = None
+
+# The fixed baseline catches a missing mamba_ssm import internally, so this
+# module remains importable in environments used for data/code-only tooling.
+from . import MambaBaseline
+
+try:
     from . import Sundial
 except ImportError:
     Sundial = None
@@ -53,7 +67,7 @@ __all__ = [
     'DLinear', 'FEDformer', 'Informer', 'LightTS', 'Reformer', 'ETSformer',
     'Pyraformer', 'PatchTST', 'MICN', 'Crossformer', 'FiLM', 'iTransformer',
     'Koopa', 'TiDE', 'FreTS', 'TimeMixer', 'TSMixer', 'SegRNN',
-    'MambaSimple', 'TemporalFusionTransformer', 'SCINet', 'PAttn', 'TimeXer',
+    'MambaSimple', 'MambaBaseline', 'TSCMamba', 'MambaTS', 'TemporalFusionTransformer', 'SCINet', 'PAttn', 'TimeXer',
     'WPMixer', 'MultiPatchFormer', 'KANAD', 'MSGNet', 'TimeFilter',
     'Sundial', 'TimeMoE', 'Chronos', 'Moirai', 'TiRex', 'TimesFM', 'Chronos2'
 ]

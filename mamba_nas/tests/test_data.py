@@ -1,7 +1,13 @@
 import numpy as np
 import pytest
 
-from mamba_nas.data import fit_normalization, normalize_samples, stratified_inner_split, validate_ts_structure
+from mamba_nas.data import (
+    fit_normalization,
+    normalize_samples,
+    stratified_inner_split,
+    stratified_kfold_splits,
+    validate_ts_structure,
+)
 
 
 def test_split_is_stratified_deterministic_and_disjoint():
@@ -18,6 +24,26 @@ def test_split_is_stratified_deterministic_and_disjoint():
 def test_rare_class_fails_instead_of_falling_back():
     with pytest.raises(ValueError, match="fewer than two"):
         stratified_inner_split(np.asarray([0, 0, 1]))
+
+
+def test_kfold_is_stratified_deterministic_and_covers_every_sample_once():
+    labels = np.repeat(np.arange(3), 10)
+    folds_a = stratified_kfold_splits(labels, n_splits=5, seed=2021)
+    folds_b = stratified_kfold_splits(labels, n_splits=5, seed=2021)
+    validation_seen = []
+    for (train_a, validation_a), (train_b, validation_b) in zip(folds_a, folds_b):
+        np.testing.assert_array_equal(train_a, train_b)
+        np.testing.assert_array_equal(validation_a, validation_b)
+        assert not set(train_a) & set(validation_a)
+        assert set(train_a) | set(validation_a) == set(range(30))
+        assert set(labels[validation_a]) == {0, 1, 2}
+        validation_seen.extend(validation_a.tolist())
+    assert sorted(validation_seen) == list(range(30))
+
+
+def test_kfold_rejects_more_folds_than_the_rarest_class():
+    with pytest.raises(ValueError, match="fewer than 3"):
+        stratified_kfold_splits(np.asarray([0, 0, 1, 1, 1]), n_splits=3)
 
 
 def test_normalization_uses_only_supplied_training_samples():
