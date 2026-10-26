@@ -2,6 +2,9 @@
 
 python mamba_tree_nas/scripts/run.py primary --dry-run --with-refit
 python mamba_tree_nas/scripts/run.py tensorboard --profile paper
+
+Re-running defaults to validated skip/resume. Use --existing error for strict
+refusal of existing runs; --dry-run previews per-run actions.
 """
 import argparse
 from pathlib import Path

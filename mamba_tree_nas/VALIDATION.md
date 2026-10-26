@@ -45,3 +45,11 @@ python -m mamba_tree_nas run-suite --profile paper --with-refit --dry-run
 ```
 
 真实GPU验收通过后，再主动启动pilot及正式矩阵。各run保存完整配置、源码指纹、数据划分与环境信息，便于后续论文审计。
+
+## 自动跳过与中断恢复回归验收（2026-10-26）
+
+命令行现默认 `--existing auto`：重复原命令会检查并复用完成运行，恢复中断运行，启动尚未创建的运行。`--resume` 保持兼容，`--existing error` 提供原有严格拒绝行为。此次只更改命令行编排、启动器说明及测试/文档，核心源码指纹未改变。
+
+执行 `python -m pytest mamba_tree_nas/tests/test_cli_reuse.py mamba_tree_nas/tests/test_pipeline.py -q`，结果 **29 passed, 2 skipped**（11.18秒，GPU条件不满足的2项仍跳过）。覆盖混合状态批量运行、原命令重复执行、候选级恢复、refit剩余seed恢复、完成文件内容及修改时间不变、严格模式、配置冲突、损坏/孤立状态拒绝与dry-run无训练。
+
+另对原 `verified-v1` 快照实际执行无 `--resume` 的独立refit命令，成功输出 `[SKIP]`；5份候选JSON、3份refit结果JSON及1份权重的内容和修改时间均未改变。原快照dry-run输出 search=skip / refit=skip，核心源码指纹匹配。

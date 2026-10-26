@@ -20,7 +20,9 @@ def parser():
         sub.add_argument("--variant")
         sub.add_argument("--search-seed", type=int)
         sub.add_argument("--run-id", default="main")
-        sub.add_argument("--resume", action="store_true")
+        reuse = sub.add_mutually_exclusive_group()
+        reuse.add_argument("--resume", action="store_true", help="Compatibility flag; automatic resume/skip is already the default")
+        reuse.add_argument("--existing", choices=("auto", "error"), default="auto", help="auto: reuse completed results and resume unfinished runs; error: reject existing runs")
         sub.add_argument("--dry-run", action="store_true")
         sub.add_argument("--run", type=Path, help="Specific saved run; refit uses its resolved config")
         sub.add_argument("--root", type=Path, help="Run tree for status/report")
@@ -46,6 +48,43 @@ def budget_summary(cfg, runs, run_id, with_refit):
     from .search import run_path
     n = len(runs)
     return {"profile": cfg["profile"], "backend": cfg["backend"], "search_runs": n, "unique_candidate_budget_per_search": cfg["search"]["budget"], "candidate_evaluations_upper": n * cfg["search"]["budget"], "proxy_initializations_upper": n * cfg["search"]["budget"] * len(cfg["seeds"]["proxy"]) if cfg["proxy"]["enabled"] else 0, "calibrations_upper_if_refit": n * 3, "refit_fits_upper_if_refit": n * 3 * len(cfg["seeds"]["refit"]), "will_refit": with_refit, "deduplication": "role aliases reduce calibration/refit counts", "output_root": str(resolve_path(cfg["output"])), "runs": [{"dataset": d, "variant": v, "search_seed": s, "path": str(run_path(cfg, d, v, s, run_id))} for d, v, s in runs]}
+
+
+def existing_run_action(path, phase, policy="auto"):
+    """Plan reuse without mutating saved results or bypassing core validation.
+
+    Completion messages are printed only AFTER search/refit validates its saved
+    protocol and returns. An empty pre-created directory is a new run.
+    """
+    path = Path(path)
+    if phase not in ("search", "refit"):
+        raise ValueError(f"Unknown run phase: {phase}")
+    if policy not in ("auto", "error"):
+        raise ValueError(f"Unknown existing-run policy: {policy}")
+    marker = path / ("manifest.json" if phase == "search" else "refit/state.json")
+    state_path = path / ("search_state.json" if phase == "search" else "refit/state.json")
+    if not marker.exists():
+        if phase == "search" and (state_path.exists() or (path / "candidates").exists() or (path / "representatives.json").exists()):
+            raise ValueError(f"Saved search artifacts have no manifest; refusing to overwrite or adopt incomplete metadata: {path}")
+        return "start"
+    if policy == "error":
+        raise FileExistsError(f"{phase} run already exists: {path}; use the default --existing auto to skip/resume")
+    if state_path.exists() and read_json(state_path).get("status") == "complete":
+        # A search finalization interrupted before representatives.json must be
+        # repaired by the core, even if an older state marked it complete.
+        if phase == "refit" or (path / "representatives.json").exists():
+            return "skip"
+    return "resume"
+
+
+def run_with_reuse(path, phase, operation, policy="auto"):
+    action = existing_run_action(path, phase, policy)
+    verb = {"start": "START", "resume": "RESUME", "skip": "CHECK"}[action]
+    print(f"[{verb}] {phase}: {path}", flush=True)
+    result = operation(action != "start")
+    if action == "skip":
+        print(f"[SKIP] {phase}: completed result validated and reused: {path}", flush=True)
+    return result, action
 
 
 def download(cfg, datasets, dry_run=False):
@@ -135,15 +174,25 @@ def main(argv=None):
         else:
             runs = matrix(cfg, args)
         result = budget_summary(cfg, runs, args.run_id, args.with_refit or args.command == "smoke")
+        result["existing_policy"] = args.existing
+        result["run_actions"] = []
+        # Dry-run reports the same reuse decisions without loading training data
+        # or claiming that the core's config/data checks have already passed.
+        for dataset, variant, seed in runs:
+            planned = run_path(cfg, dataset, variant, seed, args.run_id)
+            entry = {"path": str(planned), "search": existing_run_action(planned, "search", args.existing)}
+            if args.with_refit or args.command == "smoke":
+                entry["refit"] = existing_run_action(planned, "refit", args.existing)
+            result["run_actions"].append(entry)
+        result["reuse_validation"] = "saved config, source and data protocol are checked during execution"
         if not args.dry_run:
             print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)
             for dataset, variant, seed in runs:
                 planned_path = run_path(cfg, dataset, variant, seed, args.run_id)
-                resume_search = args.resume and ((planned_path / "manifest.json").exists() if args.command == "run-suite" else True)
-                path = search(cfg, dataset, variant, seed, args.run_id, resume_search, synthetic=args.command == "smoke")
+                path, _ = run_with_reuse(planned_path, "search", lambda resume: search(cfg, dataset, variant, seed, args.run_id, resume, synthetic=args.command == "smoke"), args.existing)
                 if args.with_refit or args.command == "smoke":
                     from .refit import refit
-                    refit(path, resume=args.resume and (path / "refit" / "state.json").exists())
+                    run_with_reuse(path, "refit", lambda resume: refit(path, resume=resume), args.existing)
                 if args.command == "smoke":
                     from .report import report
                     report(path, args.output or resolve_path(cfg["exports"]) / "smoke")
@@ -157,9 +206,10 @@ def main(argv=None):
         manifest = read_json(path / "manifest.json")
         if (args.config or args.profile or args.overrides) and cfg != manifest["config"]:
             raise ValueError("Explicit refit configuration conflicts with search manifest")
-        result = {"run": str(path), "config_source": "saved search manifest", "refit_fits_upper": 3 * len(manifest["config"]["seeds"]["refit"])}
+        result = {"run": str(path), "config_source": "saved search manifest", "refit_fits_upper": 3 * len(manifest["config"]["seeds"]["refit"]), "existing_policy": args.existing, "action": existing_run_action(path, "refit", args.existing)}
         if not args.dry_run:
-            result["output"] = str(refit(path, resume=args.resume))
+            output, _ = run_with_reuse(path, "refit", lambda resume: refit(path, resume=resume), args.existing)
+            result["output"] = str(output)
     elif args.command == "status":
         result = status(args.run or args.root or resolve_path(cfg["output"]))
     elif args.command == "report":

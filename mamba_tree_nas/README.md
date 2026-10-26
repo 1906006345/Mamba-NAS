@@ -68,6 +68,24 @@ python -m mamba_tree_nas report --root mamba_tree_nas/runs --output mamba_tree_n
 
 可以用 `search ... --with-refit` 连续运行两阶段。`run-suite` 默认仅搜索，指定 `--with-refit` 才重训练。suite 的 `--dataset` / `--variant` / `--search-seed` 用于筛选矩阵；`--run-id` 区分实验目录。`refit --run` 始终读取搜索时的完整配置，不能临时更改协议。更改配置后应使用新的 run-id。
 
+### 中断后直接重跑原命令
+
+`search`、`run-suite`、`smoke` 和 `refit` 的命令行入口默认使用 `--existing auto`，无需额外添加 `--resume`：
+
+- 已完成：检查原配置、核心源码和数据协议后打印 `[SKIP]`，复用完成结果，不重新训练。
+- 已中断或状态仍为 running：打印 `[RESUME]`；搜索复用已提交候选，当前未完成候选从固定初始化重跑；refit复用已完成校准和seed，仅补齐剩余训练。
+- 尚未开始或只有空目录：打印 `[START]`，继续创建运行。批量任务中已经完成的搜索仍会检查是否需要补做refit。
+
+例如服务器上中断后，使用相同配置、数据目录、搜索seed和run-id再次执行原命令即可：
+
+```bash
+python mamba_tree_nas/scripts/run.py primary --profile paper --with-refit
+# 先查看每个运行预计执行 start / resume / skip，不启动训练：
+python mamba_tree_nas/scripts/run.py primary --profile paper --with-refit --dry-run
+```
+
+原有 `--resume` 仍接受，行为与默认自动策略相同。需要“发现已有运行就报错”的严格模式时，使用 `--existing error`。自动策略不会覆盖配置不一致、源码不一致、状态损坏或缺失manifest的旧结果，也不会绕过运行锁。直接调用Python核心函数时，原有显式 `resume=True` 约定保持不变。
+
 paper、pilot、smoke 默认分别输出到 `runs/`、`runs_pilot/`、`runs_smoke/`，报告目录同样分离。查看 pilot 或 smoke 时请传对应 `--profile`；禁止将不同训练预算的结果直接合并。
 
 服务器小预算真实 GPU 验收：`bash mamba_tree_nas/scripts/gpu_acceptance.sh`。此脚本会读取 Heartbeat TRAIN，运行官方 Mamba 前反向以及 3 候选搜索→校准→refit→报告，需预先准备数据。它不代表正式预算结果。本次实现阶段不自动执行此脚本或正式实验。
