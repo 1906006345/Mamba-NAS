@@ -1,0 +1,11 @@
+runs/
+runs_smoke/
+runs_pilot/
+paper_exports_smoke/
+work/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pt
+*.npz
+events.out.tfevents.*

@@ -1,0 +1,87 @@
+version: 1
+defaults:
+  output: mamba_tree_nas/runs
+  exports: mamba_tree_nas/paper_exports
+  device: cuda
+  backend: mamba
+  runtime: {cpu_threads: 1, allow_tf32: false}
+  data:
+    root: data/UEA
+    primary: [Heartbeat, SpokenArabicDigits, PEMS-SF]
+    uea10: [EthanolConcentration, FaceDetection, Handwriting, Heartbeat, JapaneseVowels, PEMS-SF, SelfRegulationSCP1, SelfRegulationSCP2, SpokenArabicDigits, UWaveGestureLibrary]
+    validation_fraction: 0.2
+    split_seed: 2021
+    normalization_epsilon: 1.0e-8
+    download_url: https://www.timeseriesclassification.com/aeon-toolkit/{dataset}.zip
+  seeds:
+    search: [2021, 2022, 2023]
+    candidate: 11001
+    proxy: [21001, 21002, 21003]
+    refit: [31001, 31002, 31003]
+    calibration: 41001
+  experiments:
+    chain_forward: {topology: chain, directions: [F], algorithm: nsga2}
+    tree_forward: {topology: tree, directions: [F], algorithm: nsga2}
+    chain_direction: {topology: chain, directions: [F, B, FB_shared], algorithm: nsga2}
+    tree_direction: {topology: tree, directions: [F, B, FB_shared], algorithm: nsga2}
+    tree_direction_random: {topology: tree, directions: [F, B, FB_shared], algorithm: random}
+  space:
+    max_leaves: 3
+    max_depth: 3
+    tokenizer: [point, patch8, patch16]
+    d_model: [64, 128]
+    pooling: [mean, max, meanmax]
+    d_state: [8, 16]
+    d_conv: [2, 4]
+    expand: [1, 2]
+    sampling: {OP: 0.4, RES: 0.2, SEQ: 0.2, PAR: 0.2}
+    max_attempts: 10000
+  search:
+    population: 24
+    budget: 384
+    crossover_probability: 0.9
+    mutation_probability: 0.3
+    mutation_weights: {subtree: 0.5, leaf: 0.3, global: 0.2}
+    consecutive_failure_limit: 3
+    hv_reference: [1.1, 1.1]
+  train:
+    epochs: 30
+    min_epochs: 5
+    patience: 7
+    batch_size: 32
+    learning_rate: 0.001
+    weight_decay: 0.0001
+    dropout: 0.1
+    gradient_clip: 1.0
+    num_workers: 0
+    deterministic: true
+    precision: fp32
+  calibration: {epochs: 100, min_epochs: 10, patience: 15}
+  proxy:
+    enabled: true
+    minimum_batch: 32
+    examples_per_class: 2
+    epsilon: 1.0e-12
+  logging: {tensorboard: true, flush_seconds: 10}
+  profiling: {enabled: true, warmup: 10, repeats: 50, throughput_batch: 32}
+  retention: {save_first_refit_weights: true, predictions: true}
+  report: {top_fraction: 0.1, dpi: 180}
+  smoke: {samples: 30, test_samples: 12, channels: 3, length: 17, classes: 3}
+profiles:
+  paper: {}
+  pilot:
+    output: mamba_tree_nas/runs_pilot
+    exports: mamba_tree_nas/paper_exports_pilot
+    search: {population: 8, budget: 24}
+    train: {epochs: 8, min_epochs: 3, patience: 3}
+    calibration: {epochs: 15, min_epochs: 5, patience: 5}
+  smoke:
+    device: cpu
+    backend: test
+    output: mamba_tree_nas/runs_smoke
+    exports: mamba_tree_nas/paper_exports_smoke
+    search: {population: 3, budget: 5}
+    space: {d_model: [8], d_state: [2], d_conv: [2], expand: [1], tokenizer: [point, patch8], pooling: [mean, meanmax]}
+    train: {epochs: 2, min_epochs: 1, patience: 1, batch_size: 8}
+    calibration: {epochs: 2, min_epochs: 1, patience: 1}
+    profiling: {warmup: 1, repeats: 3, throughput_batch: 8}
