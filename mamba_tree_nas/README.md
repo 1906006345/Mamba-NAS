@@ -90,6 +90,75 @@ paper、pilot、smoke 默认分别输出到 `runs/`、`runs_pilot/`、`runs_smok
 
 服务器小预算真实 GPU 验收：`bash mamba_tree_nas/scripts/gpu_acceptance.sh`。此脚本会读取 Heartbeat TRAIN，运行官方 Mamba 前反向以及 3 候选搜索→校准→refit→报告，需预先准备数据。它不代表正式预算结果。本次实现阶段不自动执行此脚本或正式实验。
 
+## 传统搜索策略基线：固定串行空间
+
+此实验保留当前功能树方法，另外运行两种传统基线。它们不在功能树空间上更换搜索算法，也不导入或修改旧 `mamba_nas`：
+
+| 方法 | 搜索编码 / 结构 | 搜索操作 |
+|---|---|---|
+| `tree_direction`（原方法） | 有界 RES/SEQ/PAR 功能树 | 原有子树交叉、树变异和 NSGA-II |
+| `traditional_nsga2`（新增） | 固定串行残差块的分类参数向量 | 常规非支配排序、拥挤距离、二元锦标赛、均匀基因交叉和逐基因变异 |
+| `traditional_random`（新增） | 与传统 NSGA-II 完全相同的串行空间 | 独立随机采样、按有效架构去重；不根据评分产生后续样本 |
+
+串行结构固定为 `RES(OP_1) → ... → RES(OP_n)`，默认 `n=1/2/3`。每层独立选择 F/B/FB_shared、d_state、d_conv、expand；tokenizer、宽度、pooling 的候选与功能树完全相同。双向共享参数的语义也一致。向量中未启用的层不计入架构身份，不能凭无效基因占用唯一候选预算。架构仍转换为公共结构化 JSON，以便复用相同模型、MACs、代理、训练和 refit 代码；搜索算子不操作这份树表示。
+
+新增设置统一放在 **同一份 `config.yaml` 的顶层 `traditional_baselines`**：串行候选来自 `defaults.experiments.chain_direction`，树参照来自 `tree_direction`。交叉发生概率复用 `search.crossover_probability`；交叉时每个基因交换概率默认 0.5，每个子代变异概率默认 1.0，逐基因概率默认 `1/当前有效基因数`。增加层数后，原本未启用的新层基因均匀采样。采样对层数、全局配置和各层配置分别均匀取值。预算、数据、训练、代理、日志、保留规则与种子继续来自原配置。
+
+该顶层设置仅在传统基线入口解析，不改变普通功能树命令的完整解析配置或核心源码指纹，因此原功能树运行仍可按原命令恢复。传统基线额外保存自身代码指纹；修改传统基线代码或配置后需新建 run-id。
+
+### Conda 一键运行
+
+在项目根目录执行；下面正式命令需要用户在服务器主动启动：
+
+```bash
+# 先预览：Heartbeat，两种传统方法 × 三次搜索 = 6 次搜索，最多 2304 个候选
+# --with-refit 时最多 54 次完整 TRAIN refit，重复角色共用结果
+python mamba_tree_nas/scripts/run.py traditional-comparison --profile paper --dataset Heartbeat --with-refit --dry-run
+
+# 只运行两种传统基线，完成后自动导出相同结构的指标和图表
+python mamba_tree_nas/scripts/run.py traditional-comparison --profile paper --dataset Heartbeat --with-refit
+
+# 首批三数据集；--suite uea10 则运行全部 UEA10
+bash mamba_tree_nas/scripts/run_search_algorithm_comparison.sh --profile paper --with-refit
+
+# 单独补跑一种方法 / 一个搜索 seed
+python -m mamba_tree_nas compare-traditional --dataset Heartbeat --algorithm random --search-seed 2021 --with-refit
+
+# 合并已完成的功能树作为参照；只读取树结果，不启动或改动功能树搜索
+# 默认要求所选数据集/seed的 tree_direction 与基线具有相同 run-id
+python mamba_tree_nas/scripts/run.py traditional-comparison --profile paper --dataset Heartbeat --report-only --include-tree
+
+# 如果已有功能树 run-id 是 paper-v1，而基线 run-id 是 baseline-v1
+python -m mamba_tree_nas compare-traditional --dataset Heartbeat --run-id baseline-v1 --report-only --include-tree --tree-run-id paper-v1
+
+# CPU 合成数据端到端检查；仅验证流程，不提供实际 Mamba 性能结论
+python mamba_tree_nas/scripts/run.py traditional-comparison --profile smoke --search-seed 2021 --run-id serial-smoke --with-refit
+```
+
+中断后直接重跑原命令，自动校验后跳过完成项、恢复未完成项。`--no-report` 可只运行不绘图；`--report-only` 只读取已有结果，不训练。`--include-tree` 要求指定树运行已存在，缺失时明确报错。默认报告只选本次命令的数据集、算法、seed 和 run-id，避免把其他 run-id 当作额外独立重复。自定义输出路径仍使用 `--set output=...`，报告目录使用 `--output ...`。
+
+### 统一指标与结果结构
+
+两种传统基线共用功能树的真实标签训练评价、内部 TRAIN 划分和归一化、固定候选训练 seed、旁路 CE 梯度代理、Macro-F1/MACs 双目标、全程 Pareto 代表选择、轮数校准和三种子 refit。代理不影响任何方法的采样和选择。Random Search 维护的 Pareto 集及代表选择仅用于统一记录与最终评估，不反馈到随机采样。
+
+```text
+mamba_tree_nas/runs/Heartbeat/
+  tree_direction/seed_2021/main/         # 已有功能树，保持原状
+  traditional_nsga2/seed_2021/main/      # 新增传统 NSGA-II
+  traditional_random/seed_2021/main/    # 新增传统 Random Search
+```
+
+每个运行的 `manifest.json`、`split.json`、`search_state.json`、`search_history.csv`、`candidates/*.json`、`representatives.json`、`refit/`、`tensorboard/` 与功能树一致。传统候选额外记录向量编码与基因名；权重及压缩预测仍按公共保留规则保存。原 TensorBoard 启动脚本会自动发现新基线，tag 和横轴语义相同。
+
+默认报告位于 `mamba_tree_nas/paper_exports/traditional_comparison/<run-id>/`，pilot/smoke 使用对应 exports 根目录：
+
+- 公共报告：`search_summary.csv`、`candidate_metrics.csv`、`candidate_epochs.csv`、`refit_metrics.csv`、`within_search.csv`、`results.csv`、`proxy_diagnostics.csv`，以及每数据集结果表。
+- 新增对比表：`search_comparison_runs.csv` 保留每次搜索；`search_comparison.csv` 按独立搜索 seed 汇总最终 HV、按候选数/时间的 HV-AUC 与平均 HV、最佳验证 Macro-F1、Pareto 大小、失败率、拓扑覆盖和耗时。未完成搜索不参与汇总均值，表内明确标记完成数；单次搜索不生成虚假的标准差。
+- 公共图表：每数据集的 `comparison_hv`、`comparison_pareto`、有 refit 时的 `comparison_refit`，以及每次运行的训练、代理、架构和混淆矩阵图，均为 PNG/PDF。
+- `comparison_manifest.json` 记录选取的运行及比较边界。HV 使用与功能树相同的完整比较空间成本上界与固定参考点；联合报告拒绝不同训练协议、预算、种群大小、HV 参考点/归一化上界和重复搜索 seed。refit 仍先求每次搜索内的种子均值，再计算跨搜索标准差。
+
+**论文解释边界：**传统 NSGA-II 与传统 Random Search 在同一串行空间内比较，属于搜索算法对照；它们与功能树比较时，编码、可表示拓扑和遗传操作共同变化，应表述为完整方法对照。原有 `chain_direction` 是使用功能树搜索算子的串行受限消融，与这里的传统向量基线有所区别。
+
 ## 空间与对照
 
 | 实验组 | 拓扑 | 扫描 | 算法 |

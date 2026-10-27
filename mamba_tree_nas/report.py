@@ -122,11 +122,16 @@ def external_baselines(path, valid_protocols):
     return rows
 
 
-def report(root, output, external=None):
+def report(root, output, external=None, *, run_paths=None):
     root, output = Path(root), Path(output)
-    manifests = [root / "manifest.json"] if (root / "manifest.json").exists() else sorted(root.rglob("manifest.json"))
+    manifests = ([Path(p) / "manifest.json" for p in run_paths] if run_paths is not None
+                 else [root / "manifest.json"] if (root / "manifest.json").exists()
+                 else sorted(root.rglob("manifest.json")))
     if not manifests:
         raise FileNotFoundError(f"No runs under {root}")
+    for file in manifests:
+        if not file.exists():
+            raise FileNotFoundError(f"Run manifest not found: {file}")
     # Validate compatibility before writing any export artifacts.
     preflight = {}
     modes_before = set()

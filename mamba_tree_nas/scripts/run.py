@@ -2,6 +2,7 @@
 
 python mamba_tree_nas/scripts/run.py primary --dry-run --with-refit
 python mamba_tree_nas/scripts/run.py tensorboard --profile paper
+python mamba_tree_nas/scripts/run.py traditional-comparison --dataset Heartbeat --dry-run
 
 Re-running defaults to validated skip/resume. Use --existing error for strict
 refusal of existing runs; --dry-run previews per-run actions.
@@ -19,7 +20,7 @@ from mamba_tree_nas.config import load_config, resolve_path
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("action", choices=("verify", "smoke", "primary", "uea10", "comparisons", "download", "refit", "status", "report", "tensorboard", "test"))
+    p.add_argument("action", choices=("verify", "smoke", "primary", "uea10", "comparisons", "traditional-comparison", "download", "refit", "status", "report", "tensorboard", "test"))
     args, extra = p.parse_known_args()
     if args.action == "tensorboard":
         t = argparse.ArgumentParser()
@@ -32,7 +33,7 @@ def main():
     elif args.action == "test":
         command = [sys.executable, "-m", "pytest", "mamba_tree_nas/tests", "-q"] + extra
     else:
-        mapping = {"verify": ["verify-environment"], "primary": ["run-suite", "--suite", "primary"], "uea10": ["run-suite", "--suite", "uea10"], "comparisons": ["run-suite", "--suite", "primary"]}
+        mapping = {"verify": ["verify-environment"], "primary": ["run-suite", "--suite", "primary"], "uea10": ["run-suite", "--suite", "uea10"], "comparisons": ["run-suite", "--suite", "primary"], "traditional-comparison": ["compare-traditional"]}
         command = [sys.executable, "-m", "mamba_tree_nas"] + mapping.get(args.action, [args.action]) + extra
     return subprocess.call(command, cwd=ROOT)
 

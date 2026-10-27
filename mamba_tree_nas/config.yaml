@@ -1,4 +1,13 @@
 version: 1
+# Baseline-only settings are read by the traditional-comparison launcher.
+# Keeping them outside defaults preserves existing functional-tree manifests.
+traditional_baselines:
+  serial_experiment: chain_direction
+  reference_tree: tree_direction
+  variants: {nsga2: traditional_nsga2, random: traditional_random}
+  gene_exchange_probability: 0.5
+  mutation_probability: 1.0
+  gene_mutation_probability: null  # null means 1 / number of active genes
 defaults:
   output: mamba_tree_nas/runs
   exports: mamba_tree_nas/paper_exports

@@ -11,7 +11,7 @@ from .config import load_config, resolve_path
 def parser():
     p = argparse.ArgumentParser(description="Independent supervised Mamba functional-tree NAS")
     commands = p.add_subparsers(dest="command", required=True)
-    for name in ("verify-environment", "download", "smoke", "search", "refit", "run-suite", "status", "report"):
+    for name in ("verify-environment", "download", "smoke", "search", "refit", "run-suite", "status", "report", "compare-traditional"):
         sub = commands.add_parser(name)
         sub.add_argument("--config")
         sub.add_argument("--profile", choices=("smoke", "pilot", "paper"), default=None)
@@ -31,6 +31,13 @@ def parser():
         sub.add_argument("--with-refit", action="store_true")
         sub.add_argument("--external-baselines", type=Path)
         sub.add_argument("--gpu-test", action="store_true", help="Real official Mamba forward/backward environment acceptance")
+        if name == "compare-traditional":
+            sub.add_argument("--algorithm", choices=("both", "nsga2", "random"), default="both")
+            mode = sub.add_mutually_exclusive_group()
+            mode.add_argument("--report-only", action="store_true", help="Export selected existing runs without training")
+            mode.add_argument("--no-report", action="store_true", help="Run baselines without rendering the comparison report")
+            sub.add_argument("--include-tree", action="store_true", help="Include existing matching functional-tree runs in the report; never starts tree search")
+            sub.add_argument("--tree-run-id", help="Run-id of the existing reference tree (default: --run-id)")
     return p
 
 
@@ -161,6 +168,36 @@ def main(argv=None):
         result = verify(cfg, args.gpu_test and not args.dry_run)
     elif args.command == "download":
         result = download(cfg, [args.dataset] if args.dataset else cfg["data"][args.suite], args.dry_run)
+    elif args.command == "compare-traditional":
+        from .traditional import baseline_config, search as traditional_search
+        from .traditional_compare import comparison_report, matrix as traditional_matrix
+        from .search import run_path
+        cfg = baseline_config(cfg, args.config)
+        runs = traditional_matrix(cfg, args)
+        output = args.output or resolve_path(cfg["exports"]) / "traditional_comparison" / args.run_id
+        result = budget_summary(cfg, runs, args.run_id, args.with_refit and not args.report_only)
+        result.update(method="traditional categorical serial baselines", report_only=args.report_only, report_output=str(output), include_existing_tree=args.include_tree, existing_policy=args.existing)
+        result["run_actions"] = []
+        for dataset, variant, seed in runs:
+            path = run_path(cfg, dataset, variant, seed, args.run_id)
+            entry = {"path": str(path), "algorithm": cfg["experiments"][variant]["algorithm"], "search": "read_only" if args.report_only else existing_run_action(path, "search", args.existing)}
+            if args.with_refit and not args.report_only:
+                entry["refit"] = existing_run_action(path, "refit", args.existing)
+            result["run_actions"].append(entry)
+        if args.include_tree:
+            result["reference_tree_runs"] = [{"path": str(path), "exists": (path / "manifest.json").exists()} for path in (run_path(cfg, d, cfg["traditional"]["reference_tree"], s, args.tree_run_id or args.run_id) for d, s in dict.fromkeys((d, s) for d, _, s in runs))]
+        if not args.dry_run:
+            print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)
+            if not args.report_only:
+                for dataset, variant, seed in runs:
+                    path = run_path(cfg, dataset, variant, seed, args.run_id)
+                    run_with_reuse(path, "search", lambda resume: traditional_search(cfg, dataset, variant, seed, args.run_id, resume, synthetic=cfg["profile"] == "smoke"), args.existing)
+                    if args.with_refit:
+                        from .refit import refit
+                        run_with_reuse(path, "refit", lambda resume: refit(path, resume=resume), args.existing)
+            if not args.no_report:
+                result["report_output"] = str(comparison_report(cfg, runs, args.run_id, output, args.include_tree, args.tree_run_id))
+            result["completed"] = True
     elif args.command in ("search", "run-suite", "smoke"):
         from .search import run_path, search
         if args.command == "smoke":
