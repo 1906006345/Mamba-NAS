@@ -20,13 +20,17 @@ def merge(base, updates):
     return out
 
 
-def load_config(path=None, profile="paper", overrides=()):
+def load_config(path=None, profile="paper", overrides=(), *, multiscale=False):
     import yaml
     source = Path(path or DEFAULT_CONFIG).resolve()
     raw = yaml.safe_load(source.read_text(encoding="utf-8"))
     if profile not in raw["profiles"]:
         raise ValueError(f"Unknown profile: {profile}")
     cfg = merge(raw["defaults"], raw["profiles"][profile])
+    if multiscale:
+        cfg["experiments"] = copy.deepcopy(raw["multiscale_experiments"])
+        if profile == "smoke":
+            cfg["smoke"]["length"] = raw["multiscale_smoke_length"]
     for item in overrides:
         key, sep, value = item.partition("=")
         if not sep:

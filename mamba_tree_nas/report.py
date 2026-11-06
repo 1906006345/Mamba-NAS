@@ -44,6 +44,8 @@ def architecture_figure(arch, path, dpi, synthetic=False):
             if at(arch.tree, key[:-1]).op == "SEQ":
                 ax.text((px+x)/2, (py+y)/2, "F" if key[-1] == 0 else "G", fontsize=8)
         label = node.op if node.leaf is None else f"OP {node.leaf.direction}\ns={node.leaf.d_state}, c={node.leaf.d_conv}, e={node.leaf.expand}"
+        if node.leaf is not None and arch.version == 2:
+            label += f", r={node.leaf.rate}"
         ax.text(x, y, label, ha="center", va="center", bbox={"boxstyle": "round,pad=0.4", "fc": "#e9f0fa", "ec": "#396897"}, fontsize=9, zorder=2)
     ax.set_title(f"{arch.tokenizer}, D={arch.d_model}, {arch.pooling}\n{arch.hash[:12]}")
     ax.set_xlim(-.9, max(.9, arch.tree.leaves - .1)); ax.set_ylim(-arch.tree.depth - .7, .9); ax.axis("off")
@@ -176,8 +178,10 @@ def report(root, output, external=None, *, run_paths=None):
             row.update({k: state["history"][-1][k] for k in ("pareto_size", "failure_rate", "topology_count", "topology_entropy")})
         search_rows.append(row)
         write_csv(directory / "search_history.csv", state["history"])
+        if state["history"] and "scale_structure_count" in state["history"][-1]:
+            row.update({k: v for k, v in state["history"][-1].items() if k.startswith("scale_structure_")})
         for r in records:
-            candidate_rows.append(dict(identity, hash=r["hash"], status=r["status"], macs=r["macs"], parameters=r.get("parameters"), validation_macro_f1=r.get("validation", {}).get("macro_f1"), validation_accuracy=r.get("validation", {}).get("accuracy"), validation_ce=r.get("validation", {}).get("ce"), best_epoch=r.get("best_epoch"), proxy_status=r["proxy"]["status"], tree=Architecture.from_dict(r["architecture"]).tree.shape, error=r.get("error")))
+            candidate_rows.append(dict(identity, hash=r["hash"], status=r["status"], macs=r["macs"], parameters=r.get("parameters"), validation_macro_f1=r.get("validation", {}).get("macro_f1"), validation_accuracy=r.get("validation", {}).get("accuracy"), validation_ce=r.get("validation", {}).get("ce"), best_epoch=r.get("best_epoch"), proxy_status=r["proxy"]["status"], tree=Architecture.from_dict(r["architecture"]).tree.shape, scale_shape=r.get("scale_shape"), leaf_scales=r.get("leaf_scales"), cost_convention=r.get("cost_convention"), error=r.get("error")))
             epoch_rows.extend(dict(identity, hash=r["hash"], **e) for e in r.get("history", []))
         diagnostic_groups = {"all": records}
         good = [r for r in records if r["status"] == "complete"]

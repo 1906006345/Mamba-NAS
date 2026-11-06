@@ -97,10 +97,10 @@ def representatives(records, cost_bound):
     return {"high_f1": min(front, key=lambda r: (r["objectives"][0], *tie(r)))["hash"], "low_macs": min(front, key=tie)["hash"], "knee": min(front, key=lambda r: (sum(x*x for x in normalized_objective(r, cost_bound)), *tie(r)))["hash"]}
 
 
-def topology_stats(records):
+def topology_stats(records, attribute="shape"):
     from collections import Counter
     from .architecture import Architecture
-    counts = Counter(Architecture.from_dict(r["architecture"]).tree.shape for r in records if r.get("status") == "complete")
+    counts = Counter(getattr(Architecture.from_dict(r["architecture"]).tree, attribute) for r in records if r.get("status") == "complete")
     total = sum(counts.values())
     entropy = -sum((v / total) * math.log(v / total) for v in counts.values()) if total else 0.0
     return {"topology_count": len(counts), "topology_entropy": entropy, "topology_counts": dict(counts)}

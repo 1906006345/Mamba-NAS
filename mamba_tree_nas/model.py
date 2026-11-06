@@ -74,6 +74,14 @@ class Tokenizer(nn.Module):
         return out * valid[..., None], valid
 
 
+def downsample_valid(x, mask, rate):
+    batch, length, width = x.shape
+    pad = (-length) % rate
+    blocks = F.pad(x.masked_fill(~mask[..., None], 0), (0, 0, 0, pad))
+    counts = F.pad(mask, (0, pad)).reshape(batch, -1, rate).sum(-1)
+    return blocks.reshape(batch, -1, rate, width).sum(2) / counts.clamp_min(1)[..., None], counts > 0
+
+
 class TreeModule(nn.Module):
     def __init__(self, node: Node, width, dropout, factory):
         super().__init__()
@@ -82,6 +90,7 @@ class TreeModule(nn.Module):
         if node.op == "OP":
             leaf = node.leaf
             self.direction = leaf.direction
+            self.rate = leaf.rate
             self.norm = RMSNorm(width)
             # Preserve the official mixer's custom parameter initialization.
             self.mixer = factory(d_model=width, d_state=leaf.d_state, d_conv=leaf.d_conv, expand=leaf.expand)
@@ -89,6 +98,9 @@ class TreeModule(nn.Module):
 
     def forward(self, x, mask):
         if self.op == "OP":
+            original_mask = mask
+            if self.rate != 1:
+                x, mask = downsample_valid(x, mask, self.rate)
             h = self.norm(x) * mask[..., None]
             if self.direction == "F":
                 y = self.mixer(h)
@@ -97,6 +109,9 @@ class TreeModule(nn.Module):
             else:
                 y = (self.mixer(h) + reverse_valid(self.mixer(reverse_valid(h, mask)), mask)) / 2
             y = self.dropout(y)
+            if self.rate != 1:
+                y = y.repeat_interleave(self.rate, dim=1)[:, :original_mask.shape[1]]
+                mask = original_mask
         elif self.op == "RES":
             y = x + self.branches[0](x, mask)
         elif self.op == "SEQ":

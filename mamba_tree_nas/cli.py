@@ -11,7 +11,7 @@ from .config import load_config, resolve_path
 def parser():
     p = argparse.ArgumentParser(description="Independent supervised Mamba functional-tree NAS")
     commands = p.add_subparsers(dest="command", required=True)
-    for name in ("verify-environment", "download", "smoke", "search", "refit", "run-suite", "status", "report", "compare-traditional"):
+    for name in ("verify-environment", "download", "smoke", "search", "refit", "run-suite", "status", "report", "compare-traditional", "run-multiscale"):
         sub = commands.add_parser(name)
         sub.add_argument("--config")
         sub.add_argument("--profile", choices=("smoke", "pilot", "paper"), default=None)
@@ -31,6 +31,11 @@ def parser():
         sub.add_argument("--with-refit", action="store_true")
         sub.add_argument("--external-baselines", type=Path)
         sub.add_argument("--gpu-test", action="store_true", help="Real official Mamba forward/backward environment acceptance")
+        if name == "run-multiscale":
+            sub.add_argument("--report-only", action="store_true")
+            sub.add_argument("--baseline-root", type=Path)
+            sub.add_argument("--baseline-run-id", default="main")
+            sub.add_argument("--multiscale-gpu-check", action="store_true")
         if name == "compare-traditional":
             sub.add_argument("--algorithm", choices=("both", "nsga2", "random"), default="both")
             mode = sub.add_mutually_exclusive_group()
@@ -163,11 +168,15 @@ def status(root):
 def main(argv=None):
     args = parser().parse_args(argv)
     profile = args.profile or ("smoke" if args.command == "smoke" else "paper")
-    cfg = load_config(args.config, profile, args.overrides)
+    multiscale = args.command == "run-multiscale" or (args.variant or "").startswith("tree_multiscale_")
+    cfg = load_config(args.config, profile, args.overrides, **({"multiscale": True} if multiscale else {}))
     if args.command == "verify-environment":
         result = verify(cfg, args.gpu_test and not args.dry_run)
     elif args.command == "download":
         result = download(cfg, [args.dataset] if args.dataset else cfg["data"][args.suite], args.dry_run)
+    elif args.command == "run-multiscale":
+        from .multiscale import launch
+        result = launch(cfg, args)
     elif args.command == "compare-traditional":
         from .traditional import baseline_config, search as traditional_search
         from .traditional_compare import comparison_report, matrix as traditional_matrix

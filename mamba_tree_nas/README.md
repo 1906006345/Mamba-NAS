@@ -242,3 +242,40 @@ manifest 还保存核心源码指纹。搜索恢复和 refit 必须使用同一�
 测试覆盖树边界/往返/hash/遗传合法性，RES/SEQ/PAR语义、有效前缀反向、共享参数、patch尾部与padding不变性，数据隔离、RNG/正式训练隔离、零/非有限梯度，固定类别分类指标、HV/成本、嵌套seed、外部协议、原子提交/缓存/恢复冲突，以及CPU端到端搜索→refit→报告和权重数量。真实Mamba GPU测试在不满足Linux+NVIDIA时明确skip。
 
 当前本地验收结果与限制记录在 `VALIDATION.md`。没有在 Windows 进行真实 Mamba 训练或正式实验。
+## 多时间尺度功能树实验
+
+The dedicated launcher schedules only `tree_multiscale_forward` (F) and
+`tree_multiscale_direction` (F/B/FB_shared), both with NSGA-II. Activate your
+Conda environment before running these commands from the repository root:
+
+```bash
+# Preview: Heartbeat, paper profile, 2 groups × 3 seeds × 384 candidates.
+bash mamba_tree_nas/scripts/run_multiscale_tree.sh --dry-run
+
+# Run the six searches and refit their selected architectures.
+bash mamba_tree_nas/scripts/run_multiscale_tree.sh --with-refit
+
+# CPU test mixer: search, refit and report on synthetic data (not Mamba results).
+python -m mamba_tree_nas run-multiscale --profile smoke --search-seed 2021
+
+# NVIDIA Linux/WSL2: real Mamba forward/backward and tiny search/refit/report.
+bash mamba_tree_nas/scripts/multiscale_gpu_acceptance.sh
+```
+
+Use `--dataset`, `--profile`, `--variant`, `--search-seed` and `--run-id` to
+select runs. The default paper command runs search only. Reissuing the same
+command validates and reuses completed runs and resumes incomplete ones.
+`--report-only --baseline-root /path/to/old/runs --baseline-run-id main` reads
+saved runs without starting training. Baselines default to the selected
+profile's run root and run-id `main`. The comparison CSV flags missing,
+incomplete or mismatched protocols and omits HV deltas for them.
+
+Each leaf averages valid token blocks at rate 1, 2 or 4, runs the same Mamba
+operator, then repeats and crops its output to the original time grid. Allowed
+rates depend only on the shortest internal training sample for that tokenizer.
+Candidate JSON and report CSV store leaf rates and nominal scan token lengths
+at the maximum TRAIN length. TensorBoard and search history distinguish
+pure topology from topology with rates. Analytic MACs exclude block averaging
+and repeat expansion; use measured refit latency for runtime comparisons.
+Legacy architecture JSON and hashes are unchanged. Read old completed runs
+as baselines; resuming an old run still requires its original source revision.

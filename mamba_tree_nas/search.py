@@ -5,10 +5,10 @@ import random
 import time
 from pathlib import Path
 import torch
-from .architecture import Architecture, Space
+from .architecture import Architecture, Space, at, paths
 from .artifacts import Events, atomic_json, error_record, implementation_fingerprint, init_run, read_json, run_lock, write_csv
 from .config import digest, protocol_fingerprint, resolve_path
-from .cost import COST_CONVENTION, cost_upper_bound, macs
+from .cost import COST_CONVENTION, MULTISCALE_COST_NOTE, cost_upper_bound, macs
 from .data import DataProtocol
 from .metrics import hypervolume, normalized_objective, nsga_select, pareto, representatives, topology_stats, tournament
 from .proxy import measure_proxy
@@ -68,9 +68,14 @@ def search(cfg, dataset, variant, seed, run_id="main", resume=False, synthetic=F
 
 def _search_locked(path, cfg, data, variant, seed, interrupt_after, invocation_origin):
     state_path = path / "search_state.json"
-    space = Space(cfg["space"], cfg["experiments"][variant])
+    experiment = cfg["experiments"][variant]
+    scale = experiment.get("multiscale")
+    min_length = min(len(data.samples[i]) for i in data.train_indices) if scale else None
+    space = Space(cfg["space"], experiment, min_length)
     upper = cost_upper_bound(cfg["space"], data.max_length, data.channels, len(data.classes))
     cache_protocol = digest({"protocol": protocol_fingerprint(cfg), "data": data.fingerprint, "implementation": implementation_fingerprint()})
+    if scale:
+        cache_protocol = digest({"base": cache_protocol, "multiscale": scale, "min_internal_train_length": min_length})
     rng = random.Random(seed)
     state = read_json(state_path) if state_path.exists() else {"status": "running", "generation": 0, "completed": [], "population": [], "pending": [], "current_candidate": None, "elapsed_seconds": 0.0, "consecutive_failures": 0, "history": [], "rng": rng.getstate(), "cost_bound": upper, "cache_protocol": cache_protocol}
     if state["cache_protocol"] != cache_protocol or state["cost_bound"] != upper:
@@ -109,6 +114,16 @@ def _search_locked(path, cfg, data, variant, seed, interrupt_after, invocation_o
                     raise ValueError("Candidate cache key mismatch")
             else:
                 record = {"hash": h, "architecture": arch.to_dict(), "cache_key": cache_key, "generation": state["generation"], "evaluation_index": len(records) + 1, "macs": macs(arch, data.max_length, data.channels, len(data.classes)), "cost_convention": COST_CONVENTION, "candidate_seed": cfg["seeds"]["candidate"]}
+                if scale:
+                    patch = 1 if arch.tokenizer == "point" else int(arch.tokenizer[5:])
+                    tokens = math.ceil(data.max_length / patch)
+                    record["cost_convention"] += " " + MULTISCALE_COST_NOTE
+                    record["scale_shape"] = arch.tree.scale_shape
+                    record["leaf_scales"] = [
+                        {"path": list(p), "rate": n.leaf.rate, "input_tokens": tokens,
+                         "scan_tokens": math.ceil(tokens / n.leaf.rate)}
+                        for p in paths(arch.tree) if (n := at(arch.tree, p)).op == "OP"
+                    ]
                 begin = time.perf_counter()
                 record["proxy"] = measure_proxy(arch, data, cfg)
                 candidate_events = Events(path / "tensorboard" / "candidates" / h[:12], cfg, 0)
@@ -148,6 +163,11 @@ def _search_locked(path, cfg, data, variant, seed, interrupt_after, invocation_o
             elapsed = previous_elapsed + time.perf_counter() - invocation_start
             hv = hypervolume([normalized_objective(r, upper) for r in front], cfg["search"]["hv_reference"])
             point = {"candidate_count": len(records), "successful_count": sum(r["status"] == "complete" for r in records), "elapsed_seconds": elapsed, "hv": hv, "pareto_size": len(front), "failure_rate": sum(r["status"] == "failed" for r in records) / len(records), **topology_stats(records)}
+            if scale:
+                stats = topology_stats(records, "scale_shape")
+                point.update({k.replace("topology_", "scale_structure_"): v for k, v in stats.items()})
+                for key in ("scale_structure_count", "scale_structure_entropy"):
+                    events.scalar("search/" + key, point[key], len(records))
             state["history"].append(point)
             for key in ("hv", "pareto_size", "elapsed_seconds", "failure_rate", "topology_count", "topology_entropy"):
                 events.scalar("search/" + key, point[key], len(records))

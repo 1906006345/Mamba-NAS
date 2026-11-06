@@ -13,7 +13,7 @@ def macs(arch, length, channels, classes):
     patch = 1 if arch.tokenizer == "point" else int(arch.tokenizer[5:])
     tokens = math.ceil(length / patch)
     width = arch.d_model
-    trunk = sum(leaf_macs(width, tokens, at(arch.tree, p).leaf) for p in paths(arch.tree) if at(arch.tree, p).op == "OP")
+    trunk = sum(leaf_macs(width, math.ceil(tokens / at(arch.tree, p).leaf.rate), at(arch.tree, p).leaf) for p in paths(arch.tree) if at(arch.tree, p).op == "OP")
     pool = tokens * width * (2 if arch.pooling == "meanmax" else 1)
     return int(tokens * patch * channels * width + trunk + pool + width * (2 if arch.pooling == "meanmax" else 1) * classes)
 
@@ -25,6 +25,9 @@ def cost_upper_bound(space, length, channels, classes):
     width = max(space["d_model"])
     leaf = Leaf("FB_shared", max(space["d_state"]), max(space["d_conv"]), max(space["expand"]))
     return max(macs(Architecture(t, width, "meanmax", Node("OP", leaf=leaf)), length, channels, classes) + (space["max_leaves"] - 1) * leaf_macs(width, math.ceil(length / (1 if t == "point" else int(t[5:]))), leaf) for t in space["tokenizer"])
+
+
+MULTISCALE_COST_NOTE = "Mamba runs at the leaf token length; fixed block averaging and repeat expansion excluded from MACs. See measured latency for execution cost."
 
 
 COST_CONVENTION = "Analytic MAC estimate at maximum TRAIN length; FLOPs=2*MACs. Includes projection, causal conv, selective scan approximation, gating, pooling and classifier; excludes norms, bias, residual/merge arithmetic and kernel overhead. Not a complete fused-kernel profiler count."
