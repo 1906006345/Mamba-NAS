@@ -180,7 +180,8 @@ class Space:
     def leaf(self, rng, tokenizer=None):
         leaf = Leaf(rng.choice(self.e["directions"]), *(rng.choice(self.c[k]) for k in ("d_state", "d_conv", "expand")))
 
-        return replace(leaf, rate=rng.choice(self.rates(tokenizer))) if self.scale else leaf
+        rates = self.rates(tokenizer)
+        return replace(leaf, rate=rng.choice(rates)) if len(rates) > 1 else leaf
 
     def node(self, rng, depth=0, tokenizer=None):
         # Preserve the declared recursive grammar distribution, conditioning on

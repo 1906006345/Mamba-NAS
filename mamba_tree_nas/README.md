@@ -279,3 +279,27 @@ pure topology from topology with rates. Analytic MACs exclude block averaging
 and repeat expansion; use measured refit latency for runtime comparisons.
 Legacy architecture JSON and hashes are unchanged. Read old completed runs
 as baselines; resuming an old run still requires its original source revision.
+
+### 多尺度后续消融
+
+在 Conda 环境、项目根目录下运行。两种模式默认只预览，加 `--execute` 才训练：
+
+```bash
+bash mamba_tree_nas/scripts/run_multiscale_followup.sh fixed
+bash mamba_tree_nas/scripts/run_multiscale_followup.sh fixed --execute
+bash mamba_tree_nas/scripts/run_multiscale_followup.sh budgeted
+bash mamba_tree_nas/scripts/run_multiscale_followup.sh budgeted --execute
+```
+
+`fixed` 从原多尺度搜索目录只读获取代表架构（可用
+`--source-root`、`--source-run-id` 指定），按保存的训练配置重新校准和 refit，
+验证 TRAIN 划分一致。PEMS-SF 的 patch8 不满足 rate=4 的最短 token 限制，
+因此仅比较 1/2。最多 12 个变体、36 次 refit。`fixed_paired.csv` 给出逐 refit
+seed 相对全 rate=1 的差值；延迟字段来自现有推理画像。
+
+`budgeted` 在 SpokenArabicDigits 对照两种倍率空间，共 576 个候选。
+每次搜索仅 refit 验证集选出的一个预算内代表；默认上限 180,000 MACs，
+无候选时记录未命中。输出逐搜索、逐 refit、配对和按命中汇总的 CSV。
+`--profile smoke --seed 2021 --execute` 使用 CPU 合成数据验收该流程。
+默认结果在 `mamba_tree_nas/work/followup/`，可用 `--output` 修改。
+同配置重跑会复用本轮已经完成的任务；原实验结果保持只读，原搜索恢复须使用其原始源码。
