@@ -3,12 +3,13 @@ from __future__ import annotations
 import math
 import random
 import time
+from copy import deepcopy
 from pathlib import Path
 import torch
 from .architecture import Architecture, Space, at, paths
 from .artifacts import Events, atomic_json, error_record, implementation_fingerprint, init_run, read_json, run_lock, write_csv
 from .config import digest, protocol_fingerprint, resolve_path
-from .cost import COST_CONVENTION, MULTISCALE_COST_NOTE, cost_upper_bound, macs
+from .cost import COST_CONVENTION, MULTISCALE_COST_NOTE, cost_upper_bound, macs, trunk_macs
 from .data import DataProtocol
 from .metrics import hypervolume, normalized_objective, nsga_select, pareto, representatives, topology_stats, tournament
 from .proxy import measure_proxy
@@ -31,12 +32,16 @@ def load_records(path):
     return [read_json(Path(path) / "candidates" / f"{h}.json") for h in state["completed"]]
 
 
-def _new_pending(space, cfg, rng, records, population, count):
+def _new_pending(space, cfg, rng, records, population, count, *, dimensions=None, telemetry=None):
+    from .temporal_ops import neighbors
+
+    policy = cfg["search"].get("temporal_mutation")
     used = {r["hash"] for r in records}
     pending = []
     for _ in range(space.c["max_attempts"]):
         if len(pending) == count:
             break
+        edit = None
         if not population or space.e["algorithm"] == "random":
             arch = space.sample(rng)
         else:
@@ -44,9 +49,37 @@ def _new_pending(space, cfg, rng, records, population, count):
             b = Architecture.from_dict(tournament(population, rng)["architecture"])
             arch = space.crossover(a, b, rng) if rng.random() < cfg["search"]["crossover_probability"] else a
             if rng.random() < cfg["search"]["mutation_probability"]:
-                arch = space.mutate(arch, rng, cfg["search"]["mutation_weights"])
+                def override(parent):
+                    nonlocal edit
+                    draw = rng.random()
+                    single, double = policy["single_probability"], policy["redistribute_probability"]
+                    if draw >= single + double:
+                        return None
+                    mode = "single" if draw < single else "redistribute"
+                    options, counts = neighbors(space, parent, mode, dimensions, policy["window"], used)
+                    stats = telemetry["operators"].setdefault(mode, {})
+                    for k, v in dict(counts, attempts=1,
+                                     fallback_no_neighbor=int(not options and not counts["already_seen"]),
+                                     fallback_all_seen=int(not options and bool(counts["already_seen"]))).items():
+                        stats[k] = stats.get(k, 0) + v
+                    if not options:
+                        return None
+                    child = options[rng.choice(sorted(options))]
+                    edit = {"operator": mode, "input_hash": parent.hash,
+                            "input_macs": macs(parent, *dimensions),
+                            "input_trunk_macs": trunk_macs(parent, dimensions[0]),
+                            "child_trunk_macs": trunk_macs(child, dimensions[0]),
+                            "input_evaluated": any(r["hash"] == parent.hash and r["status"] == "complete"
+                                                   for r in records)}
+                    return child
+                arch = space.mutate(arch, rng, cfg["search"]["mutation_weights"],
+                                    **({"leaf_override": override} if policy and policy["enabled"] else {}))
         if arch.hash not in used:
             used.add(arch.hash); pending.append(arch.to_dict())
+            if edit:
+                stats = telemetry["operators"][edit["operator"]]
+                stats["submitted"] = stats.get("submitted", 0) + 1
+                telemetry["edits"][arch.hash] = edit
     if len(pending) != count:
         raise RuntimeError("Unique-candidate generation exhausted max_attempts; reduce budget or enlarge space (no hidden random-immigrant fallback)")
     return pending
@@ -70,6 +103,9 @@ def _search_locked(path, cfg, data, variant, seed, interrupt_after, invocation_o
     state_path = path / "search_state.json"
     experiment = cfg["experiments"][variant]
     scale = experiment.get("multiscale")
+    policy = cfg["search"].get("temporal_mutation")
+    if policy and policy["enabled"] and (not scale or experiment["topology"] != "tree" or experiment["algorithm"] != "nsga2"):
+        raise ValueError("Temporal mutation requires a multiscale NSGA-II tree")
     min_length = min(len(data.samples[i]) for i in data.train_indices) if scale else None
     space = Space(cfg["space"], experiment, min_length)
     upper = cost_upper_bound(cfg["space"], data.max_length, data.channels, len(data.classes))
@@ -100,7 +136,12 @@ def _search_locked(path, cfg, data, variant, seed, interrupt_after, invocation_o
             if not state["pending"]:
                 population = [indexed[h] for h in state["population"]]
                 count = min(cfg["search"]["population"], cfg["search"]["budget"] - len(records))
-                state["pending"] = _new_pending(space, cfg, rng, records, population, count)
+                dimensions = (data.max_length, data.channels, len(data.classes))
+                telemetry = deepcopy(state.get("temporal_mutation", {"operators": {}, "edits": {}})) if policy else None
+                state["pending"] = _new_pending(space, cfg, rng, records, population, count,
+                                                dimensions=dimensions, telemetry=telemetry)
+                if telemetry is not None:
+                    state["temporal_mutation"] = telemetry
                 save()
             arch = Architecture.from_dict(state["pending"][0])
             h = arch.hash
@@ -114,6 +155,9 @@ def _search_locked(path, cfg, data, variant, seed, interrupt_after, invocation_o
                     raise ValueError("Candidate cache key mismatch")
             else:
                 record = {"hash": h, "architecture": arch.to_dict(), "cache_key": cache_key, "generation": state["generation"], "evaluation_index": len(records) + 1, "macs": macs(arch, data.max_length, data.channels, len(data.classes)), "cost_convention": COST_CONVENTION, "candidate_seed": cfg["seeds"]["candidate"]}
+                edit = state.get("temporal_mutation", {}).get("edits", {}).get(h)
+                if edit:
+                    record["temporal_edit"] = edit
                 if scale:
                     patch = 1 if arch.tokenizer == "point" else int(arch.tokenizer[5:])
                     tokens = math.ceil(data.max_length / patch)

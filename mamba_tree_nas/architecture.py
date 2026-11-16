@@ -215,8 +215,12 @@ class Space:
                 return child
         return a
 
-    def mutate(self, a, rng, weights):
+    def mutate(self, a, rng, weights, *, leaf_override=None):
         mode = rng.choices(list(weights), weights=list(weights.values()))[0]
+        if mode == "leaf" and leaf_override is not None:
+            edited = leaf_override(a)
+            if edited is not None:
+                return edited
         for _ in range(64):
             if mode == "global":
                 key = rng.choice(("tokenizer", "d_model", "pooling"))

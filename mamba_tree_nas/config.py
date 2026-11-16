@@ -20,7 +20,7 @@ def merge(base, updates):
     return out
 
 
-def load_config(path=None, profile="paper", overrides=(), *, multiscale=False):
+def load_config(path=None, profile="paper", overrides=(), *, multiscale=False, temporal=False):
     import yaml
     source = Path(path or DEFAULT_CONFIG).resolve()
     raw = yaml.safe_load(source.read_text(encoding="utf-8"))
@@ -31,6 +31,11 @@ def load_config(path=None, profile="paper", overrides=(), *, multiscale=False):
         cfg["experiments"] = copy.deepcopy(raw["multiscale_experiments"])
         if profile == "smoke":
             cfg["smoke"]["length"] = raw["multiscale_smoke_length"]
+    if temporal:
+        cfg["temporal_study"] = copy.deepcopy(raw["temporal_study"])
+        cfg["search"]["temporal_mutation"] = copy.deepcopy(cfg["temporal_study"]["policy"])
+        if profile == "paper":
+            cfg["search"].update(cfg["temporal_study"]["search"])
     for item in overrides:
         key, sep, value = item.partition("=")
         if not sep:
@@ -51,6 +56,10 @@ def load_config(path=None, profile="paper", overrides=(), *, multiscale=False):
 
 
 def validate(c):
+    if policy := c["search"].get("temporal_mutation"):
+        probs = [policy[k] for k in ("single_probability", "redistribute_probability")]
+        if not 0 <= policy["window"] <= 1 or min(probs) < 0 or not sum(probs) <= 1:
+            raise ValueError("Invalid temporal mutation window or probabilities")
     if c["backend"] not in ("test", "mamba"):
         raise ValueError("backend must be mamba or test")
     if c["train"]["precision"] != "fp32":

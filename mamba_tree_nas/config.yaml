@@ -1,4 +1,12 @@
 version: 1
+temporal_study:
+  policy: {enabled: false, window: 0.15, single_probability: 0.16666666666666666, redistribute_probability: 0.16666666666666666}
+  diagnostics: {parents: 12, children_per_operator: 2, fixed_parents: 3, fixed_epochs: 15, sampling_seed: 62001}
+  search: {population: 24, budget: 96}
+  datasets:
+    Heartbeat: {direction: forward, cap: 2100000}
+    PEMS-SF: {direction: direction, cap: 9300000}
+    SpokenArabicDigits: {direction: direction, cap: 180000}
 # Baseline-only settings are read by the traditional-comparison launcher.
 # Keeping them outside defaults preserves existing functional-tree manifests.
 traditional_baselines:

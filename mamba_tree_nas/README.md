@@ -284,6 +284,9 @@ as baselines; resuming an old run still requires its original source revision.
 
 在 Conda 环境、项目根目录下运行。两种模式默认只预览，加 `--execute` 才训练：
 
+启动脚本会在 Python 启动前默认设置 `CUBLAS_WORKSPACE_CONFIG=:4096:8`，
+以支持 PyTorch 的 cuBLAS 确定性模式。若直接调用 Python 模块，请先导出该变量。
+
 ```bash
 bash mamba_tree_nas/scripts/run_multiscale_followup.sh fixed
 bash mamba_tree_nas/scripts/run_multiscale_followup.sh fixed --execute
@@ -303,3 +306,47 @@ seed 相对全 rate=1 的差值；延迟字段来自现有推理画像。
 `--profile smoke --seed 2021 --execute` 使用 CPU 合成数据验收该流程。
 默认结果在 `mamba_tree_nas/work/followup/`，可用 `--output` 修改。
 同配置重跑会复用本轮已经完成的任务；原实验结果保持只读，原搜索恢复须使用其原始源码。
+
+### 时序尺度变异实验
+
+激活 Conda 环境后，从仓库根目录运行。默认仅预览；只有指定
+`--execute` 才训练：
+
+```bash
+bash mamba_tree_nas/scripts/run_temporal_mutation.sh diagnose
+bash mamba_tree_nas/scripts/run_temporal_mutation.sh diagnose --execute
+bash mamba_tree_nas/scripts/run_temporal_mutation.sh search
+bash mamba_tree_nas/scripts/run_temporal_mutation.sh search --execute --with-refit
+```
+
+- `diagnose` 只读取指定目录中已完成的多尺度搜索，默认
+  `--source-root mamba_tree_nas/runs --source-run-id main`。如果 TRAIN
+  数据位置发生迁移，可用 `--data-root` 指定；划分和文件内容仍须匹配。
+  Heartbeat 比较并行重分配与随机双叶编辑；PEMS-SF 比较单叶微调与
+  整叶重采样。先看 `diagnostic_coverage_summary.csv`，再看
+  `diagnostic_parents.csv` 和 `diagnostic_summary.csv`。候选集合相同
+  的父代不能区分两种算子。`search_best` 与 `fixed_end` 分开解释；
+  诊断只用内部 TRAIN/验证集，不读取 TEST。
+- `search` 默认两数据集 × 两种变异 × 三种子 × 96 个候选，初始
+  种群逐哈希核对。可用 `--dataset Heartbeat --seed 2021` 跑一对；
+  `--dataset SpokenArabicDigits` 可追加语音数据。加 `--with-refit`
+  时，只重训练事先指定 MACs 上限内验证 F1 最高的代表，未命中保留为空。
+  `search_paired.csv` 给出同 seed 差值，`search_hit_summary.csv` 给出
+  命中率，`search_hv.csv` 同时含候选数和墙钟时间。用
+  `mutation_counts.csv` 和 `mutation_edits.csv` 检查算子实际触发与回退。
+  MACs 是解析成本；延迟来自 refit 画像，两者分别报告。
+- 默认输出在 `mamba_tree_nas/work/temporal_mutation/<命令>/<配置档>/`。
+  已有搜索结果只读；新实验用同一配置和目录重跑即可恢复。旧搜索如需
+  继续训练，应使用对应源码。窗口、概率、预算和成本上限在
+  `config.yaml` 的 `temporal_study` 下集中配置，支持 `--config` 与
+  `--set`。插入新策略的开关是 `search.temporal_mutation.enabled`，
+  普通搜索默认不启用；配对入口分别关、开。
+
+```bash
+# CPU 合成数据验收
+python -m pytest mamba_tree_nas/tests/test_temporal_mutation.py
+bash mamba_tree_nas/scripts/run_temporal_mutation.sh diagnose --profile smoke --execute
+bash mamba_tree_nas/scripts/run_temporal_mutation.sh search --profile smoke --seed 2021 --execute
+# Linux + NVIDIA + 官方 Mamba，Heartbeat 小预算验收
+bash mamba_tree_nas/scripts/temporal_mutation_gpu_acceptance.sh
+```

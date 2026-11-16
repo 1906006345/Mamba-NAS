@@ -9,11 +9,18 @@ def leaf_macs(width, tokens, leaf):
     return tokens * per_token * (2 if leaf.direction == "FB_shared" else 1)
 
 
+def trunk_macs(arch, length):
+    patch = 1 if arch.tokenizer == "point" else int(arch.tokenizer[5:])
+    tokens = math.ceil(length / patch)
+    return sum(leaf_macs(arch.d_model, math.ceil(tokens / node.leaf.rate), node.leaf)
+               for p in paths(arch.tree) if (node := at(arch.tree, p)).op == "OP")
+
+
 def macs(arch, length, channels, classes):
     patch = 1 if arch.tokenizer == "point" else int(arch.tokenizer[5:])
     tokens = math.ceil(length / patch)
     width = arch.d_model
-    trunk = sum(leaf_macs(width, math.ceil(tokens / at(arch.tree, p).leaf.rate), at(arch.tree, p).leaf) for p in paths(arch.tree) if at(arch.tree, p).op == "OP")
+    trunk = trunk_macs(arch, length)
     pool = tokens * width * (2 if arch.pooling == "meanmax" else 1)
     return int(tokens * patch * channels * width + trunk + pool + width * (2 if arch.pooling == "meanmax" else 1) * classes)
 

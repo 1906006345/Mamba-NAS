@@ -17,7 +17,7 @@ def implementation_fingerprint():
     import hashlib
     from . import __version__
     source = Path(__file__).parent
-    core = ("architecture.py", "model.py", "data.py", "cost.py", "metrics.py", "training.py", "proxy.py", "search.py", "refit.py", "profiling.py", "config.py", "artifacts.py")
+    core = ("architecture.py", "model.py", "data.py", "cost.py", "metrics.py", "training.py", "proxy.py", "search.py", "refit.py", "profiling.py", "config.py", "artifacts.py", "temporal_ops.py")
     return {"version": __version__, "source_sha256": digest({name: hashlib.sha256((source / name).read_bytes()).hexdigest() for name in core})}
 
 
