@@ -1,4 +1,29 @@
 version: 1
+temporal_followup:
+  version: 1
+  datasets: [Heartbeat, PEMS-SF, SpokenArabicDigits]
+  search_seeds: [52021, 52022, 52023, 52024, 52025]
+  arms: [original, matched_random, single]
+  source_seeds: [2021, 2022, 2023]
+  window: 0.15
+  census_windows: [0.10, 0.15, 0.30]
+  sampling_seed: 62002
+  smoke_data: {length: 261, channels: 48}
+  audit: {architectures: 2, seeds: [11001, 11002, 11003], repeats: 2, epochs: 30}
+  diagnostic: {parents: 12, children: 2, seeds: [11001, 11002, 11003], epochs: 30}
+  search: {population: 24, budget: 96}
+  profiles:
+    paper: {}
+    pilot:
+      search_seeds: [52021]
+      audit: {architectures: 1, seeds: [11001], repeats: 2, epochs: 3}
+      diagnostic: {parents: 2, children: 1, seeds: [11001], epochs: 3}
+      search: {population: 4, budget: 8}
+    smoke:
+      search_seeds: [52021]
+      audit: {architectures: 2, seeds: [11001], repeats: 2, epochs: 2}
+      diagnostic: {parents: 2, children: 1, seeds: [11001], epochs: 2}
+      search: {population: 3, budget: 6}
 temporal_study:
   policy: {enabled: false, window: 0.15, single_probability: 0.16666666666666666, redistribute_probability: 0.16666666666666666}
   diagnostics: {parents: 12, children_per_operator: 2, fixed_parents: 3, fixed_epochs: 15, sampling_seed: 62001}

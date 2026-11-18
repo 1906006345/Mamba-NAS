@@ -172,3 +172,4 @@ environment.txt
 pytest-of-root/
 causal_conv1d-1.4.0+cu118torch2.4cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
 mamba_ssm-2.1.0+cu118torch2.4cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+/mamba_tree_nas/work/

@@ -309,6 +309,10 @@ seed 相对全 rate=1 的差值；延迟字段来自现有推理画像。
 
 ### 时序尺度变异实验
 
+2026-11-18新增的复跑审计、邻域普查、受控单叶诊断和三组公共评分搜索，
+使用独立入口 `scripts/run_temporal_followup.sh`。完整命令、配置、恢复和结果文件
+说明见 [TEMPORAL_FOLLOWUP.md](TEMPORAL_FOLLOWUP.md)；原入口和已有结果保持原协议。
+
 激活 Conda 环境后，从仓库根目录运行。默认仅预览；只有指定
 `--execute` 才训练：
 
