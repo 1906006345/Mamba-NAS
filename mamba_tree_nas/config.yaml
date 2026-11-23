@@ -1,4 +1,45 @@
 version: 1
+deployment_nas:
+  version: 1
+  datasets:
+    Heartbeat: tree_multiscale_forward
+    PEMS-SF: tree_multiscale_direction
+    SpokenArabicDigits: tree_multiscale_direction
+  search_seeds: [52021, 52022, 52023]
+  training_seeds: [11001, 11002, 11003]
+  sampling_seed: 62003
+  target_gpu: L20
+  panel_size: 32
+  rate_pairs: 8
+  benchmark: {rounds: 3, warmup: 30, repeats: 100, throughput_batch: 32}
+  search: {population: 200, budget: 800}
+  reference_epochs: 100
+  supernet_epochs: 30
+  checkpoints: [200, 400, 600, 800]
+  audit_quota: 3
+  scale_multiplier: 2.0
+  hv_reference: [1.1, 1.1, 1.1]
+  profiles:
+    paper: {}
+    pilot:
+      search_seeds: [52021]
+      panel_size: 8
+      rate_pairs: 3
+      search: {population: 4, budget: 8}
+      reference_epochs: 12
+      supernet_epochs: 3
+      checkpoints: [4, 8]
+    smoke:
+      search_seeds: [52021]
+      training_seeds: [11001, 11002, 11003]
+      panel_size: 6
+      rate_pairs: 2
+      benchmark: {rounds: 2, warmup: 1, repeats: 3, throughput_batch: 2}
+      search: {population: 3, budget: 6}
+      reference_epochs: 3
+      supernet_epochs: 2
+      checkpoints: [3, 6]
+      audit_quota: 2
 temporal_followup:
   version: 1
   datasets: [Heartbeat, PEMS-SF, SpokenArabicDigits]
